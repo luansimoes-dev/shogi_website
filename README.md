@@ -1,6 +1,6 @@
 # shogi.com
 
-
+```text
 Estrutura do projeto 
 
 lib/
@@ -23,3 +23,4 @@ lib/
      │
      ├── supervisor.ex        # supervisiona os servers
      └── repo.ex
+```
