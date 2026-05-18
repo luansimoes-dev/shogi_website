@@ -22,5 +22,6 @@ lib/
      │    └── queue.ex        # lógica pura da fila
      │
      ├── supervisor.ex        # supervisiona os servers
-     └── repo.ex
+     ├── repo.ex
+     └── application.ex
 ```
