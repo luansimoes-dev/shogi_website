@@ -4,6 +4,7 @@ defmodule ShogiWeb do
   def router do
     quote do
       use Phoenix.Router, helpers: false
+
       import Plug.Conn
       import Phoenix.Controller
       import Phoenix.LiveView.Router
@@ -23,7 +24,6 @@ defmodule ShogiWeb do
         layouts: [html: ShogiWeb.Layouts]
 
       import Plug.Conn
-      import ShogiWeb.Gettext
 
       unquote(verified_routes())
     end
@@ -59,10 +59,10 @@ defmodule ShogiWeb do
 
   defp html_helpers do
     quote do
-      use Phoenix.HTML
-      import Phoenix.LiveView.Helpers
-      import ShogiWeb.CoreComponents
-      import ShogiWeb.Gettext
+      import Phoenix.HTML
+      import Phoenix.HTML.Form
+
+      alias Phoenix.LiveView.JS
 
       unquote(verified_routes())
     end

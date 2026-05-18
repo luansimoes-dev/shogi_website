@@ -41,6 +41,7 @@ defmodule Shogi.MixProject do
       # Banco de dados
       {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
+      {:phoenix_ecto, "~> 4.4"},
 
       # JSON
       {:jason, "~> 1.4"},

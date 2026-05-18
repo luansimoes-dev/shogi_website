@@ -17,14 +17,10 @@ defmodule ShogiWeb.Router do
   scope "/", ShogiWeb do
     pipe_through(:browser)
 
-    # Lobby — página inicial com fila de espera
     live("/", LobbyLive, :index)
-
-    # Partida — entra na partida pelo game_id
-    live("/game/:game_id", GameLive, :index)
+    live("/game/:game_id", GameLive.Show, :index)
   end
 
-  # Dashboard de desenvolvimento
   if Application.compile_env(:shogi_com, :dev_routes) do
     import Phoenix.LiveDashboard.Router
 

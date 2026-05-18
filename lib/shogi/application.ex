@@ -4,23 +4,12 @@ defmodule Shogi.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Banco de dados
-      Shogi.Repo,
-
-      # PubSub — usado pelo Server e pelo LiveView
       {Phoenix.PubSub, name: Shogi.PubSub},
-
-      # Registry — mapeia game_id => pid do Game.Server
       {Registry, keys: :unique, name: Shogi.Game.Registry},
-
-      # Supervisor customizado (game + matchmaking)
-      Shogi.Supervisor,
-
-      # Endpoint Phoenix — deve ser o último
       ShogiWeb.Endpoint
     ]
 
-    opts = [strategy: :one_for_one, name: Shogi.RootSupervisor]
+    opts = [strategy: :one_for_one, name: Shogi.Supervisor]
     Supervisor.start_link(children, opts)
   end
 
