@@ -1,1 +1,47 @@
+# Elixir
 _build/
+deps/
+*.beam
+*.plt
+
+# Node/Frontend
+node_modules/
+assets/node_modules/
+
+# Build outputs (gerado - não commitar)
+priv/static/assets/
+priv/static/cache_manifest.json
+
+# Dependências do Phoenix
+cover/
+doc/
+
+# Arquivos temporários e do SO
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.#*
+
+# IDE e Editor
+.vscode/
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+.elixir_ls/
+
+# Environment e segurança
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# OS específicos
+.DS_Store
+.AppleDouble
+.LSOverride
+ehthumbs.db
