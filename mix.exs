@@ -66,10 +66,10 @@ defmodule Shogi.MixProject do
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
-      # Certifique-se de usar "default" se não tiver alterado no config.exs
+      # Mantem o nome configurado em config/config.exs.
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["tailwind default", "esbuild default"],
-      "assets.deploy": ["tailwind default --minify", "esbuild default --minify", "phx.digest"]
+      "assets.build": ["tailwind shogi_com", "esbuild shogi_com"],
+      "assets.deploy": ["tailwind shogi_com --minify", "esbuild shogi_com --minify", "phx.digest"]
     ]
   end
 end

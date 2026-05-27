@@ -1,108 +1,130 @@
-<div class="p-8">
-  <h1 class="text-3xl font-bold mb-4">
-    Shogi Game
-  </h1>
-
-  <div class="mb-4 space-y-1">
-    <p>
-      <strong>Game ID:</strong>
-      <%= @game_id %>
-    </p>
-
-    <p>
-      <strong>Phase:</strong>
-      <%= @game.phase %>
-    </p>
-
-    <p>
-      <strong>Turn:</strong>
-      <%= @game.turn %>
-    </p>
-
-    <p>
-      <strong>You:</strong>
-      <%= @side || "not joined" %>
-    </p>
-  </div>
-
-  <div class="flex gap-2 mb-6">
-    <button
-      phx-click="join"
-      phx-value-side="sente"
-      class="bg-blue-600 text-white px-4 py-2 rounded"
-    >
-      Join Sente
-    </button>
-
-    <button
-      phx-click="join"
-      phx-value-side="gote"
-      class="bg-red-600 text-white px-4 py-2 rounded"
-    >
-      Join Gote
-    </button>
-  </div>
-
-  <div class="mb-4">
-    <p>
-      <strong>Selected:</strong>
-      <%= inspect(@selected) %>
-    </p>
-  </div>
-
-  <div class="grid grid-cols-9 gap-1 w-fit">
-    <%= for row <- 1..9 do %>
-      <%= for col <- 1..9 do %>
-        <% piece = Shogi.Game.Board.get(@game.board, {col, row}) %>
-
-        <button
-          phx-click="square"
-          phx-value-col={col}
-          phx-value-row={row}
-          class={[
-            "w-16 h-16 border flex items-center justify-center text-xl font-bold rounded",
-            @selected == {col, row} && "bg-yellow-300",
-            @selected != {col, row} && rem(row + col, 2) == 0 && "bg-amber-100",
-            @selected != {col, row} && rem(row + col, 2) == 1 && "bg-amber-200",
-            piece && piece.owner == :sente && "text-blue-800",
-            piece && piece.owner == :gote && "text-red-800"
-          ]}
-        >
-          <%= if piece do %>
-            <span class={piece.owner == :gote && "rotate-180"}>
-              <%= piece_symbol(piece) %>
-            </span>
-          <% else %>
-            &nbsp;
-          <% end %>
-        </button>
-      <% end %>
-    <% end %>
-  </div>
-
-  <div class="mt-6 grid grid-cols-2 gap-6 w-fit">
+<div class="game-layout">
+  <section class="card game-info">
     <div>
-      <h2 class="font-bold mb-2">Sente hand</h2>
+      <p class="eyebrow">Partida</p>
+      <h1>Shogi</h1>
+      <p class="muted">Game ID: <strong><%= @game_id %></strong></p>
+    </div>
 
-      <div class="flex gap-2 flex-wrap max-w-xs">
+    <dl class="info-grid">
+      <div>
+        <dt>Phase</dt>
+        <dd><%= phase_label(@game.phase) %></dd>
+      </div>
+
+      <div>
+        <dt>Turn</dt>
+        <dd><%= side_label(@game.turn) %></dd>
+      </div>
+
+      <div>
+        <dt>Seu lado</dt>
+        <dd><%= side_label(@side) %></dd>
+      </div>
+
+      <div>
+        <dt>Selecionada</dt>
+        <dd><%= selected_label(@selected) %></dd>
+      </div>
+    </dl>
+
+    <div class="actions">
+      <button
+        type="button"
+        class="btn sente"
+        phx-click="join"
+        phx-value-side="sente"
+        disabled={@side != nil or @game.phase == :finished}
+      >
+        Entrar Sente
+      </button>
+
+      <button
+        type="button"
+        class="btn gote"
+        phx-click="join"
+        phx-value-side="gote"
+        disabled={@side != nil or @game.phase == :finished}
+      >
+        Entrar Gote
+      </button>
+    </div>
+
+    <%= if @move_error do %>
+      <div class="error-message" role="alert">
+        <%= @move_error %>
+      </div>
+    <% end %>
+  </section>
+
+  <section class="card board-card">
+    <div class="board-wrapper">
+      <div class="shogi-board" aria-label="Tabuleiro de Shogi">
+        <%= for row <- 1..9 do %>
+          <%= for col <- 1..9 do %>
+            <% pos = {col, row} %>
+            <% piece = Shogi.Game.Board.get(@game.board, pos) %>
+
+            <button
+              type="button"
+              class={[
+                "square",
+                rem(row + col, 2) == 0 && "light",
+                rem(row + col, 2) == 1 && "dark",
+                square_status(@selected, @game.last_move, pos)
+              ]}
+              phx-click="square"
+              phx-value-col={col}
+              phx-value-row={row}
+              aria-label={"Casa #{col}, #{row}"}
+            >
+              <%= if piece do %>
+                <span class={["piece", piece.owner == :gote && "gote"]}>
+                  <%= piece_symbol(piece) %>
+                </span>
+              <% end %>
+            </button>
+          <% end %>
+        <% end %>
+      </div>
+    </div>
+  </section>
+
+  <aside class="card hand sente">
+    <div>
+      <p class="eyebrow">Sente</p>
+      <h2>Capturas</h2>
+    </div>
+
+    <div class="hand-list">
+      <%= if @game.board.hands.sente == [] do %>
+        <span class="empty-hand">Sem pecas</span>
+      <% else %>
         <%= for piece <- @game.board.hands.sente do %>
-          <span class="border px-2 py-1 rounded bg-blue-100">
+          <span class="hand-piece">
             <%= piece_symbol(%{type: piece, owner: :sente}) %>
           </span>
         <% end %>
-      </div>
+      <% end %>
+    </div>
+  </aside>
+
+  <aside class="card hand gote">
+    <div>
+      <p class="eyebrow">Gote</p>
+      <h2>Capturas</h2>
     </div>
 
-    <div>
-      <h2 class="font-bold mb-2">Gote hand</h2>
-
-      <div class="flex gap-2 flex-wrap max-w-xs">
+    <div class="hand-list">
+      <%= if @game.board.hands.gote == [] do %>
+        <span class="empty-hand">Sem pecas</span>
+      <% else %>
         <%= for piece <- @game.board.hands.gote do %>
-          <span class="border px-2 py-1 rounded bg-red-100">
+          <span class="hand-piece gote">
             <%= piece_symbol(%{type: piece, owner: :gote}) %>
           </span>
         <% end %>
-      </div>
+      <% end %>
     </div>
-  </div>
+  </aside>
 </div>

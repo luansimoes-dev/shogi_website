@@ -131,8 +131,30 @@ defmodule Shogi.Game.Server do
   # move
   # ---------------------------------------------------------------------------
 
-  def handle_call({:move, _, _, _, _}, _from, %{phase: :waiting} = state) do
-    {:reply, {:error, :game_not_started}, state, @idle_timeout}
+  def handle_call({:move, player_id, from, to, opts}, _from, %{phase: :waiting} = state) do
+    piece = Board.get(state.board, from)
+    promote = Keyword.get(opts, :promote, false) or Board.must_promote?(piece, to, state.turn)
+
+    with true <- player_id != nil,
+         :ok <- check_turn(state, player_id),
+         true <- state.players.sente == player_id and state.turn == :sente,
+         true <- Rules.valid_move?(state.board, from, to, state.turn),
+         {:ok, new_board, captured} <- Board.move(state.board, from, to, promote) do
+      new_state = %{
+        state
+        | board: new_board,
+          turn: next_turn(state.turn),
+          move_count: state.move_count + 1,
+          last_move: {:move, from, to, promote, captured}
+      }
+
+      broadcast(new_state, {:game_updated, public_state(new_state)})
+
+      {:reply, {:ok, public_state(new_state)}, new_state, @idle_timeout}
+    else
+      false -> {:reply, {:error, :game_not_started}, state, @idle_timeout}
+      {:error, reason} -> {:reply, {:error, reason}, state, @idle_timeout}
+    end
   end
 
   def handle_call({:move, _, _, _, _}, _from, %{phase: :finished} = state) do

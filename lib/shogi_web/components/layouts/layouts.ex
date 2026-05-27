@@ -26,20 +26,20 @@ defmodule ShogiWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <main class="min-h-screen bg-zinc-100 text-zinc-900">
-      <header class="border-b bg-white px-8 py-4">
-        <div class="flex items-center justify-between">
-          <a href={~p"/"} class="text-xl font-bold">
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="app-header-inner">
+          <a href={~p"/"} class="brand">
             Shogi
           </a>
 
-          <span class="text-sm text-zinc-500">
+          <span class="app-badge">
             MVP
           </span>
         </div>
       </header>
 
-      <section class="p-8">
+      <section class="page">
         <%= @inner_content %>
       </section>
     </main>
