@@ -60,9 +60,9 @@
   <section class="card board-card">
     <div class="board-wrapper">
       <div class="shogi-board" aria-label="Tabuleiro de Shogi">
-        <%= for row <- 1..9 do %>
-          <%= for col <- 1..9 do %>
-            <% pos = {col, row} %>
+        <%= for row <- 0..8 do %>
+          <%= for col <- 0..8 do %>
+            <% pos = {row, col} %>
             <% piece = Shogi.Game.Board.get(@game.board, pos) %>
 
             <button
@@ -73,10 +73,11 @@
                 rem(row + col, 2) == 1 && "dark",
                 square_status(@selected, @game.last_move, pos)
               ]}
+              style={"grid-row: #{row + 1}; grid-column: #{col + 1};"}
               phx-click="square"
-              phx-value-col={col}
               phx-value-row={row}
-              aria-label={"Casa #{col}, #{row}"}
+              phx-value-col={col}
+              aria-label={"Casa row #{row}, col #{col}"}
             >
               <%= if piece do %>
                 <span class={["piece", piece.owner == :gote && "gote"]}>

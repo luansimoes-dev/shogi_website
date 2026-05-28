@@ -1,8 +1,9 @@
 defmodule Shogi.Game.Board do
   @size 9
+  @range 0..8
 
   @type player :: :sente | :gote
-  @type position :: {1..9, 1..9}
+  @type position :: {0..8, 0..8}
 
   @type piece_type ::
           :king
@@ -30,19 +31,15 @@ defmodule Shogi.Game.Board do
           hands: %{sente: [piece_type()], gote: [piece_type()]}
         }
 
-  # =====================================================================
-  # Inicialização
-  # =====================================================================
-
   def new do
     squares =
       %{}
-      |> place_back_rank(:gote, 1)
-      |> place_special(:gote, 2)
-      |> place_pawns(:gote, 3)
-      |> place_pawns(:sente, 7)
-      |> place_special(:sente, 8)
-      |> place_back_rank(:sente, 9)
+      |> place_back_rank(:gote, 0)
+      |> place_special(:gote, 1)
+      |> place_pawns(:gote, 2)
+      |> place_pawns(:sente, 6)
+      |> place_special(:sente, 7)
+      |> place_back_rank(:sente, 8)
 
     %{
       squares: squares,
@@ -50,31 +47,32 @@ defmodule Shogi.Game.Board do
     }
   end
 
-  # =====================================================================
-  # API pública
-  # =====================================================================
+  def size, do: @size
+  def rows, do: @range
+  def cols, do: @range
 
   def get(%{squares: squares}, pos), do: Map.get(squares, pos)
+  def get_piece(board, pos), do: get(board, pos)
 
   def empty?(board, pos), do: is_nil(get(board, pos))
-
   def occupied?(board, pos), do: not empty?(board, pos)
 
-  def inside?({col, row}) do
-    col in 1..@size and row in 1..@size
+  def inside?({row, col}) do
+    row in @range and col in @range
   end
+
+  def inside?(_pos), do: false
 
   def move(board, from, to, promote? \\ false) do
     with :ok <- validate_position(from),
          :ok <- validate_position(to),
          {:ok, piece} <- fetch_piece(board, from),
-         :ok <- validate_destination(board, to, piece.owner) do
-      {board_after_capture, captured} = maybe_capture(board, to)
-
-      must_promote? = must_promote?(piece, to, piece.owner)
+         :ok <- validate_destination(board, to, piece.owner),
+         :ok <- validate_promotion(piece, from, to, promote?) do
+      {board_after_capture, captured} = maybe_capture(board, to, piece.owner)
 
       moved_piece =
-        if promote? or must_promote? do
+        if promote? or must_promote?(piece, to, piece.owner) do
           promote(piece)
         else
           piece
@@ -94,13 +92,7 @@ defmodule Shogi.Game.Board do
          :ok <- validate_empty(board, to),
          :ok <- validate_piece_in_hand(board, type, player) do
       new_hand = List.delete(board.hands[player], type)
-
-      new_squares =
-        Map.put(board.squares, to, %{
-          type: type,
-          owner: player
-        })
-
+      new_squares = Map.put(board.squares, to, %{type: type, owner: player})
       new_hands = Map.put(board.hands, player, new_hand)
 
       {:ok, %{board | squares: new_squares, hands: new_hands}}
@@ -108,9 +100,7 @@ defmodule Shogi.Game.Board do
   end
 
   def pieces_of(board, player) do
-    Enum.filter(board.squares, fn {_pos, piece} ->
-      piece.owner == player
-    end)
+    Enum.filter(board.squares, fn {_pos, piece} -> piece.owner == player end)
   end
 
   def king_position(board, player) do
@@ -122,33 +112,37 @@ defmodule Shogi.Game.Board do
     end
   end
 
-  # =====================================================================
-  # Regras de promoção
-  # =====================================================================
+  def in_promotion_zone?({row, _col}, :sente), do: row in 0..2
+  def in_promotion_zone?({row, _col}, :gote), do: row in 6..8
 
-  def in_promotion_zone?({_col, row}, :sente), do: row <= 3
-  def in_promotion_zone?({_col, row}, :gote), do: row >= 7
-
-  def must_promote?(%{type: :pawn}, {_col, 1}, :sente), do: true
-  def must_promote?(%{type: :lance}, {_col, 1}, :sente), do: true
-  def must_promote?(%{type: :knight}, {_col, row}, :sente) when row <= 2, do: true
-
-  def must_promote?(%{type: :pawn}, {_col, 9}, :gote), do: true
-  def must_promote?(%{type: :lance}, {_col, 9}, :gote), do: true
-  def must_promote?(%{type: :knight}, {_col, row}, :gote) when row >= 8, do: true
-
+  def must_promote?(%{type: type}, {0, _col}, :sente) when type in [:pawn, :lance], do: true
+  def must_promote?(%{type: :knight}, {row, _col}, :sente) when row in 0..1, do: true
+  def must_promote?(%{type: type}, {8, _col}, :gote) when type in [:pawn, :lance], do: true
+  def must_promote?(%{type: :knight}, {row, _col}, :gote) when row in 7..8, do: true
   def must_promote?(_piece, _to, _player), do: false
 
-  def promotable?(%{type: type}) do
-    type in [:pawn, :lance, :knight, :silver, :bishop, :rook]
+  def promotable?(%{type: type}), do: promotable?(type)
+  def promotable?(type), do: type in [:pawn, :lance, :knight, :silver, :bishop, :rook]
+
+  def can_promote?(piece, from, to) do
+    promotable?(piece) and
+      (in_promotion_zone?(from, piece.owner) or in_promotion_zone?(to, piece.owner))
   end
 
   def opponent(:sente), do: :gote
   def opponent(:gote), do: :sente
 
-  # =====================================================================
-  # Validações internas
-  # =====================================================================
+  def unpromote(:promoted_pawn), do: :pawn
+  def unpromote(:promoted_lance), do: :lance
+  def unpromote(:promoted_knight), do: :knight
+  def unpromote(:promoted_silver), do: :silver
+  def unpromote(:promoted_bishop), do: :bishop
+  def unpromote(:promoted_rook), do: :rook
+  def unpromote(type), do: type
+
+  def promote(%{type: type, owner: owner}) do
+    %{type: promoted_type(type), owner: owner}
+  end
 
   defp fetch_piece(board, pos) do
     case get(board, pos) do
@@ -158,19 +152,11 @@ defmodule Shogi.Game.Board do
   end
 
   defp validate_position(pos) do
-    if inside?(pos) do
-      :ok
-    else
-      {:error, :invalid_position}
-    end
+    if inside?(pos), do: :ok, else: {:error, :invalid_position}
   end
 
   defp validate_empty(board, pos) do
-    if empty?(board, pos) do
-      :ok
-    else
-      {:error, :square_occupied}
-    end
+    if empty?(board, pos), do: :ok, else: {:error, :square_occupied}
   end
 
   defp validate_destination(board, to, player) do
@@ -181,39 +167,26 @@ defmodule Shogi.Game.Board do
     end
   end
 
-  defp validate_piece_in_hand(board, type, player) do
-    if type in board.hands[player] do
-      :ok
-    else
-      {:error, :piece_not_in_hand}
-    end
+  defp validate_promotion(_piece, _from, _to, false), do: :ok
+
+  defp validate_promotion(piece, from, to, true) do
+    if can_promote?(piece, from, to), do: :ok, else: {:error, :invalid_promotion}
   end
 
-  # =====================================================================
-  # Captura e promoção
-  # =====================================================================
+  defp validate_piece_in_hand(board, type, player) do
+    if type in board.hands[player], do: :ok, else: {:error, :piece_not_in_hand}
+  end
 
-  defp maybe_capture(board, to) do
+  defp maybe_capture(board, to, captor) do
     case get(board, to) do
       nil ->
         {board, nil}
 
-      %{type: type, owner: enemy} ->
-        player = opponent(enemy)
+      %{type: type} ->
         base_type = unpromote(type)
-
-        new_hand = [base_type | board.hands[player]]
-        new_hands = Map.put(board.hands, player, new_hand)
-
+        new_hands = Map.update!(board.hands, captor, &[base_type | &1])
         {%{board | hands: new_hands}, base_type}
     end
-  end
-
-  defp promote(%{type: type, owner: owner}) do
-    %{
-      type: promoted_type(type),
-      owner: owner
-    }
   end
 
   defp promoted_type(:pawn), do: :promoted_pawn
@@ -224,41 +197,29 @@ defmodule Shogi.Game.Board do
   defp promoted_type(:rook), do: :promoted_rook
   defp promoted_type(type), do: type
 
-  defp unpromote(:promoted_pawn), do: :pawn
-  defp unpromote(:promoted_lance), do: :lance
-  defp unpromote(:promoted_knight), do: :knight
-  defp unpromote(:promoted_silver), do: :silver
-  defp unpromote(:promoted_bishop), do: :bishop
-  defp unpromote(:promoted_rook), do: :rook
-  defp unpromote(type), do: type
-
-  # =====================================================================
-  # Setup inicial
-  # =====================================================================
-
   defp place_pawns(squares, owner, row) do
-    Enum.reduce(1..@size, squares, fn col, acc ->
-      Map.put(acc, {col, row}, %{type: :pawn, owner: owner})
+    Enum.reduce(@range, squares, fn col, acc ->
+      Map.put(acc, {row, col}, %{type: :pawn, owner: owner})
     end)
   end
 
   defp place_back_rank(squares, owner, row) do
     [:lance, :knight, :silver, :gold, :king, :gold, :silver, :knight, :lance]
-    |> Enum.with_index(1)
+    |> Enum.with_index(0)
     |> Enum.reduce(squares, fn {type, col}, acc ->
-      Map.put(acc, {col, row}, %{type: type, owner: owner})
+      Map.put(acc, {row, col}, %{type: type, owner: owner})
     end)
   end
 
   defp place_special(squares, :gote, row) do
     squares
-    |> Map.put({2, row}, %{type: :bishop, owner: :gote})
-    |> Map.put({8, row}, %{type: :rook, owner: :gote})
+    |> Map.put({row, 1}, %{type: :rook, owner: :gote})
+    |> Map.put({row, 7}, %{type: :bishop, owner: :gote})
   end
 
   defp place_special(squares, :sente, row) do
     squares
-    |> Map.put({2, row}, %{type: :rook, owner: :sente})
-    |> Map.put({8, row}, %{type: :bishop, owner: :sente})
+    |> Map.put({row, 1}, %{type: :bishop, owner: :sente})
+    |> Map.put({row, 7}, %{type: :rook, owner: :sente})
   end
 end

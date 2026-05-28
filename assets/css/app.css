@@ -115,7 +115,7 @@ a {
 
 .game-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(360px, 680px) minmax(180px, 240px);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 640px) minmax(180px, 240px);
   grid-template-areas:
     "info board gote"
     "info board sente";
@@ -229,7 +229,7 @@ a {
 
 .board-wrapper {
   width: 100%;
-  overflow-x: auto;
+  overflow: visible;
   padding: 4px;
 }
 
@@ -237,10 +237,11 @@ a {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
   grid-template-rows: repeat(9, 1fr);
-  width: clamp(330px, 66vw, 650px);
+  width: min(100%, 620px);
   aspect-ratio: 1 / 1;
   margin: 0 auto;
   overflow: hidden;
+  grid-auto-flow: row;
   border: 4px solid var(--board-edge);
   border-radius: 8px;
   background: var(--board-edge);

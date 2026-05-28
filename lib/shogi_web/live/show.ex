@@ -46,7 +46,7 @@ defmodule ShogiWeb.GameLive.Show do
 
   @impl true
   def handle_event("square", %{"col" => col, "row" => row}, socket) do
-    pos = {String.to_integer(col), String.to_integer(row)}
+    pos = {String.to_integer(row), String.to_integer(col)}
     clicked_piece = Board.get(socket.assigns.game.board, pos)
 
     case socket.assigns.selected do
@@ -154,7 +154,7 @@ defmodule ShogiWeb.GameLive.Show do
   defp phase_label(phase), do: inspect(phase)
 
   defp selected_label(nil), do: "Nenhuma"
-  defp selected_label({col, row}), do: "#{col}, #{row}"
+  defp selected_label({row, col}), do: "row #{row}, col #{col}"
 
   defp error_text(:side_taken), do: "Esse lado ja esta ocupado."
   defp error_text(:already_joined), do: "Voce ja entrou nesta partida."
@@ -169,6 +169,7 @@ defmodule ShogiWeb.GameLive.Show do
   defp error_text(:own_piece_on_destination), do: "O destino tem uma peca sua."
   defp error_text(:blocked_by_own_piece), do: "O destino tem uma peca sua."
   defp error_text(:path_blocked), do: "Ha uma peca bloqueando o caminho."
+  defp error_text(:invalid_promotion), do: "Essa peca nao pode promover nessa jogada."
   defp error_text(reason), do: "Jogada recusada: #{inspect(reason)}"
 
   defp piece_symbol(%{type: :king}), do: "王"
