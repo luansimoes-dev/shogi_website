@@ -51,8 +51,24 @@
     </div>
 
     <%= if @move_error do %>
-      <div class="error-message" role="alert">
+      <div class="error-message move-error" role="alert">
         <%= @move_error %>
+      </div>
+    <% end %>
+
+    <%= if @pending_promotion do %>
+      <div class="promotion-choice" role="dialog" aria-live="polite">
+        <p>Deseja promover esta peça?</p>
+
+        <div class="promotion-actions">
+          <button type="button" class="btn sente" phx-click="confirm_promotion" phx-value-promote="true">
+            Promover
+          </button>
+
+          <button type="button" class="btn secondary" phx-click="confirm_promotion" phx-value-promote="false">
+            Não promover
+          </button>
+        </div>
       </div>
     <% end %>
   </section>
@@ -102,9 +118,15 @@
         <span class="empty-hand">Sem pecas</span>
       <% else %>
         <%= for piece <- @game.board.hands.sente do %>
-          <span class="hand-piece">
+          <button
+            type="button"
+            class={["hand-piece", selected_drop_class(assigns, piece, :sente)]}
+            phx-click="select_drop"
+            phx-value-type={to_string(piece)}
+            phx-value-side="sente"
+          >
             <%= piece_symbol(%{type: piece, owner: :sente}) %>
-          </span>
+          </button>
         <% end %>
       <% end %>
     </div>
@@ -121,9 +143,15 @@
         <span class="empty-hand">Sem pecas</span>
       <% else %>
         <%= for piece <- @game.board.hands.gote do %>
-          <span class="hand-piece gote">
+          <button
+            type="button"
+            class={["hand-piece", "gote", selected_drop_class(assigns, piece, :gote)]}
+            phx-click="select_drop"
+            phx-value-type={to_string(piece)}
+            phx-value-side="gote"
+          >
             <%= piece_symbol(%{type: piece, owner: :gote}) %>
-          </span>
+          </button>
         <% end %>
       <% end %>
     </div>
