@@ -4,7 +4,7 @@ defmodule ShogiWeb.GameLive.Show do
   alias Shogi.Game.{Board, Rules, Server}
 
   @impl true
-  def mount(%{"game_id" => game_id}, _session, socket) do
+  def mount(%{"game_id" => game_id}, session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Shogi.PubSub, "game:#{game_id}")
     end
@@ -14,23 +14,25 @@ defmodule ShogiWeb.GameLive.Show do
       {:error, {:already_started, _pid}} -> :ok
     end
 
+    game = Server.state(game_id)
+    player_id = session_player_id(session)
+
     {:ok,
      socket
      |> assign(:game_id, game_id)
-     |> assign(:player_id, nil)
-     |> assign(:side, nil)
+     |> assign(:player_id, player_id)
+     |> assign(:side, side_for_player(game, player_id))
      |> assign(:selected, nil)
      |> assign(:selected_drop, nil)
      |> assign(:pending_promotion, nil)
      |> assign(:move_error, nil)
-     |> assign(:game, Server.state(game_id))}
+     |> assign(:game, game)}
   end
 
   @impl true
   def handle_event("join", %{"side" => side}, socket) do
-    with {:ok, side} <- parse_side(side) do
-      player_id = "player-" <> Integer.to_string(System.unique_integer([:positive]))
-
+    with {:ok, side} <- parse_side(side),
+         player_id when is_binary(player_id) <- socket.assigns.player_id do
       case Server.join(socket.assigns.game_id, player_id, side) do
         {:ok, _phase} ->
           {:noreply,
@@ -44,6 +46,7 @@ defmodule ShogiWeb.GameLive.Show do
           {:noreply, assign(socket, :move_error, error_text(reason))}
       end
     else
+      nil -> {:noreply, assign(socket, :move_error, "Sessao sem jogador anonimo.")}
       :error -> {:noreply, assign(socket, :move_error, "Lado invalido.")}
     end
   end
@@ -230,6 +233,18 @@ defmodule ShogiWeb.GameLive.Show do
     |> assign(:move_error, nil)
   end
 
+  defp side_for_player(%{players: %{sente: player_id}}, player_id) when is_binary(player_id),
+    do: :sente
+
+  defp side_for_player(%{players: %{gote: player_id}}, player_id) when is_binary(player_id),
+    do: :gote
+
+  defp side_for_player(_game, _player_id), do: nil
+
+  defp session_player_id(%{"player_id" => player_id}), do: player_id
+  defp session_player_id(%{player_id: player_id}), do: player_id
+  defp session_player_id(_session), do: nil
+
   defp own_piece?(%{owner: owner}, side), do: owner == side
   defp own_piece?(_, _side), do: false
 
@@ -245,6 +260,40 @@ defmodule ShogiWeb.GameLive.Show do
     do: "selected-drop"
 
   defp selected_drop_class(_assigns, _type, _owner), do: nil
+
+  defp board_rows(:gote), do: 8..0//-1
+  defp board_rows(_side), do: 0..8
+
+  defp board_cols(:gote), do: 8..0//-1
+  defp board_cols(_side), do: 0..8
+
+  defp piece_orientation_class(%{owner: owner}, viewer_side) do
+    if owner == viewer_side_or_default(viewer_side), do: "own-piece", else: "opponent-piece"
+  end
+
+  defp viewer_side_or_default(nil), do: :sente
+  defp viewer_side_or_default(side), do: side
+
+  defp hand_sections(%{board: board}, :gote) do
+    [
+      %{title: "Sua mao", side: :gote, pieces: board.hands.gote, clickable?: true},
+      %{title: "Mao do adversario", side: :sente, pieces: board.hands.sente, clickable?: false}
+    ]
+  end
+
+  defp hand_sections(%{board: board}, :sente) do
+    [
+      %{title: "Sua mao", side: :sente, pieces: board.hands.sente, clickable?: true},
+      %{title: "Mao do adversario", side: :gote, pieces: board.hands.gote, clickable?: false}
+    ]
+  end
+
+  defp hand_sections(%{board: board}, _side) do
+    [
+      %{title: "Sente", side: :sente, pieces: board.hands.sente, clickable?: false},
+      %{title: "Gote", side: :gote, pieces: board.hands.gote, clickable?: false}
+    ]
+  end
 
   defp last_move_highlight?({:move, from, to, _promote, _captured}, pos), do: pos in [from, to]
   defp last_move_highlight?({:drop, _type, to}, pos), do: pos == to

@@ -365,6 +365,7 @@ defmodule Shogi.Game.Server do
       turn: state.turn,
       phase: state.phase,
       winner: state.winner,
+      players: state.players,
       move_count: state.move_count,
       last_move: state.last_move,
       time_left_seconds: time_left(state.turn_timer_ref)

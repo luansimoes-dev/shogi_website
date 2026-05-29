@@ -76,8 +76,8 @@
   <section class="card board-card">
     <div class="board-wrapper">
       <div class="shogi-board" aria-label="Tabuleiro de Shogi">
-        <%= for row <- 0..8 do %>
-          <%= for col <- 0..8 do %>
+        <%= for row <- board_rows(@side) do %>
+          <%= for col <- board_cols(@side) do %>
             <% pos = {row, col} %>
             <% piece = Shogi.Game.Board.get(@game.board, pos) %>
 
@@ -89,14 +89,13 @@
                 rem(row + col, 2) == 1 && "dark",
                 square_status(@selected, @game.last_move, pos)
               ]}
-              style={"grid-row: #{row + 1}; grid-column: #{col + 1};"}
               phx-click="square"
               phx-value-row={row}
               phx-value-col={col}
               aria-label={"Casa row #{row}, col #{col}"}
             >
               <%= if piece do %>
-                <span class={["piece", piece.owner == :gote && "gote"]}>
+                <span class={["piece", to_string(piece.owner), piece_orientation_class(piece, @side)]}>
                   <%= piece_symbol(piece) %>
                 </span>
               <% end %>
@@ -107,53 +106,46 @@
     </div>
   </section>
 
-  <aside class="card hand sente">
-    <div>
-      <p class="eyebrow">Sente</p>
-      <h2>Capturas</h2>
-    </div>
+  <%= for hand <- hand_sections(@game, @side) do %>
+    <aside class={["card", "hand", to_string(hand.side)]}>
+      <div>
+        <p class="eyebrow"><%= side_label(hand.side) %></p>
+        <h2><%= hand.title %></h2>
+      </div>
 
-    <div class="hand-list">
-      <%= if @game.board.hands.sente == [] do %>
-        <span class="empty-hand">Sem pecas</span>
-      <% else %>
-        <%= for piece <- @game.board.hands.sente do %>
-          <button
-            type="button"
-            class={["hand-piece", selected_drop_class(assigns, piece, :sente)]}
-            phx-click="select_drop"
-            phx-value-type={to_string(piece)}
-            phx-value-side="sente"
-          >
-            <%= piece_symbol(%{type: piece, owner: :sente}) %>
-          </button>
+      <div class="hand-list">
+        <%= if hand.pieces == [] do %>
+          <span class="empty-hand">Sem pecas</span>
+        <% else %>
+          <%= for piece <- hand.pieces do %>
+            <%= if hand.clickable? do %>
+              <button
+                type="button"
+                class={[
+                  "hand-piece",
+                  to_string(hand.side),
+                  piece_orientation_class(%{owner: hand.side}, @side),
+                  selected_drop_class(assigns, piece, hand.side)
+                ]}
+                phx-click="select_drop"
+                phx-value-type={to_string(piece)}
+                phx-value-side={hand.side}
+              >
+                <%= piece_symbol(%{type: piece, owner: hand.side}) %>
+              </button>
+            <% else %>
+              <span class={[
+                "hand-piece",
+                to_string(hand.side),
+                piece_orientation_class(%{owner: hand.side}, @side),
+                "disabled"
+              ]}>
+                <%= piece_symbol(%{type: piece, owner: hand.side}) %>
+              </span>
+            <% end %>
+          <% end %>
         <% end %>
-      <% end %>
-    </div>
-  </aside>
-
-  <aside class="card hand gote">
-    <div>
-      <p class="eyebrow">Gote</p>
-      <h2>Capturas</h2>
-    </div>
-
-    <div class="hand-list">
-      <%= if @game.board.hands.gote == [] do %>
-        <span class="empty-hand">Sem pecas</span>
-      <% else %>
-        <%= for piece <- @game.board.hands.gote do %>
-          <button
-            type="button"
-            class={["hand-piece", "gote", selected_drop_class(assigns, piece, :gote)]}
-            phx-click="select_drop"
-            phx-value-type={to_string(piece)}
-            phx-value-side="gote"
-          >
-            <%= piece_symbol(%{type: piece, owner: :gote}) %>
-          </button>
-        <% end %>
-      <% end %>
-    </div>
-  </aside>
+      </div>
+    </aside>
+  <% end %>
 </div>

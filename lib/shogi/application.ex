@@ -6,6 +6,8 @@ defmodule Shogi.Application do
     children = [
       {Phoenix.PubSub, name: Shogi.PubSub},
       {Registry, keys: :unique, name: Shogi.Game.Registry},
+      {DynamicSupervisor, name: Shogi.Game.Supervisor, strategy: :one_for_one},
+      Shogi.Matchmaking.Server,
       ShogiWeb.Endpoint
     ]
 

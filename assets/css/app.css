@@ -318,8 +318,23 @@ a {
   font-size: clamp(1.35rem, 4vw, 2.05rem);
 }
 
-.piece.gote {
+.piece.sente,
+.hand-piece.sente {
+  color: var(--sente);
+}
+
+.piece.gote,
+.hand-piece.gote {
   color: var(--gote);
+}
+
+.piece.own-piece,
+.hand-piece.own-piece {
+  transform: none;
+}
+
+.piece.opponent-piece,
+.hand-piece.opponent-piece {
   transform: rotate(180deg);
 }
 
@@ -360,10 +375,6 @@ a {
   font-size: 1.22rem;
 }
 
-.hand-piece.gote {
-  color: var(--gote);
-  transform: rotate(180deg);
-}
 
 .empty-hand {
   color: var(--muted);
@@ -496,8 +507,13 @@ a {
   transform: translateY(-2px);
 }
 
-.hand-piece.gote.selected-drop {
+.hand-piece.opponent-piece.selected-drop {
   transform: rotate(180deg) translateY(2px);
+}
+
+.hand-piece.disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .promotion-choice {
@@ -524,4 +540,24 @@ a {
 .move-error {
   color: #b91c1c;
   font-weight: 700;
+}
+
+.matchmaking-panel .match-button {
+  width: 100%;
+}
+
+.queue-pulse {
+  width: 48px;
+  height: 48px;
+  margin: 0 0 18px;
+  border: 5px solid rgba(31, 122, 104, 0.18);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: queue-spin 900ms linear infinite;
+}
+
+@keyframes queue-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

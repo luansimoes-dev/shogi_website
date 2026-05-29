@@ -1,105 +1,133 @@
 defmodule Shogi.Matchmaking.Server do
   @moduledoc """
-  GenServer que gerencia a fila de matchmaking.
-  Usa Queue para lógica pura e dispara a criação de partidas
-  via DynamicSupervisor quando dois jogadores são pareados.
+  GenServer que gerencia a fila de matchmaking anonimo.
   """
 
   use GenServer
 
-  alias Shogi.Matchmaking.Queue
   alias Shogi.Game.Server, as: GameServer
+  alias Shogi.Matchmaking.Queue
 
-  # ---------------------------------------------------------------------------
-  # API pública
-  # ---------------------------------------------------------------------------
+  defstruct queue: Queue.new()
 
   def start_link(_opts) do
-    GenServer.start_link(__MODULE__, Queue.new(), name: __MODULE__)
+    GenServer.start_link(__MODULE__, %__MODULE__{}, name: __MODULE__)
   end
 
-  @doc "Entra na fila. Retorna :waiting ou {:matched, game_id, side}."
-  def join(player_id) do
-    GenServer.call(__MODULE__, {:join, player_id})
+  def join_queue(player_id) do
+    GenServer.call(__MODULE__, {:join_queue, player_id})
   end
 
-  @doc "Sai da fila (ex: jogador fechou a aba na tela de espera)."
-  def leave(player_id) do
-    GenServer.call(__MODULE__, {:leave, player_id})
+  def leave_queue(player_id) do
+    GenServer.call(__MODULE__, {:leave_queue, player_id})
   end
 
-  @doc "Retorna quantos jogadores estão aguardando."
+  def status(player_id) do
+    GenServer.call(__MODULE__, {:status, player_id})
+  end
+
   def queue_size do
-    GenServer.call(__MODULE__, :size)
+    GenServer.call(__MODULE__, :queue_size)
   end
 
-  # ---------------------------------------------------------------------------
-  # Callbacks
-  # ---------------------------------------------------------------------------
+  def join(player_id), do: join_queue(player_id)
+  def leave(player_id), do: leave_queue(player_id)
 
   @impl true
-  def init(queue), do: {:ok, queue}
+  def init(state), do: {:ok, state}
 
   @impl true
-  def handle_call({:join, player_id}, _from, queue) do
-    case Queue.enqueue(queue, player_id) do
-      {:error, :already_queued} ->
-        {:reply, {:error, :already_queued}, queue}
+  def handle_call({:join_queue, player_id}, _from, state) do
+    cond do
+      Queue.member?(state.queue, player_id) ->
+        {:reply, {:waiting}, state}
 
-      {:ok, new_queue} ->
-        case Queue.dequeue(new_queue) do
-          {:matched, player1, player2, rest} ->
-            game_id = start_game(player1, player2)
-            {:reply, {:matched, game_id, :sente}, rest}
-
-          :waiting ->
-            notify_waiting(player_id)
-            {:reply, :waiting, new_queue}
+      true ->
+        state.queue
+        |> Queue.enqueue(player_id)
+        |> case do
+          {:ok, queue} -> match_or_wait(%{state | queue: queue}, player_id)
+          {:error, reason} -> {:reply, {:error, reason}, state}
         end
     end
   end
 
-  def handle_call({:leave, player_id}, _from, queue) do
-    {:reply, :ok, Queue.remove(queue, player_id)}
+  def handle_call({:leave_queue, player_id}, _from, state) do
+    {:reply, :ok, %{state | queue: Queue.remove(state.queue, player_id)}}
   end
 
-  def handle_call(:size, _from, queue) do
-    {:reply, Queue.size(queue), queue}
+  def handle_call({:status, player_id}, _from, state) do
+    status = if Queue.member?(state.queue, player_id), do: :waiting, else: :idle
+    {:reply, status, state}
   end
 
-  # ---------------------------------------------------------------------------
-  # Privado
-  # ---------------------------------------------------------------------------
+  def handle_call(:queue_size, _from, state) do
+    {:reply, Queue.size(state.queue), state}
+  end
 
-  defp start_game(player1, player2) do
+  defp match_or_wait(state, joined_player_id) do
+    case Queue.dequeue(state.queue) do
+      {:matched, player1, player2, rest} when player1 != player2 ->
+        match = create_match(player1, player2)
+        notify_player(match.sente.player_id, match.sente)
+        notify_player(match.gote.player_id, match.gote)
+
+        reply = if joined_player_id == match.sente.player_id, do: match.sente, else: match.gote
+        {:reply, {:matched, reply}, %{state | queue: rest}}
+
+      _ ->
+        {:reply, {:waiting}, state}
+    end
+  end
+
+  defp create_match(player1, player2) do
     game_id = generate_id()
+    start_game(game_id)
 
-    {:ok, _pid} =
-      DynamicSupervisor.start_child(
-        Shogi.Game.Supervisor,
-        {GameServer, game_id: game_id}
-      )
+    {sente_player, gote_player} = assign_random_sides(player1, player2)
 
-    GameServer.join(game_id, player1, :sente)
-    GameServer.join(game_id, player2, :gote)
+    {:ok, _phase} = GameServer.join(game_id, sente_player, :sente)
+    {:ok, _phase} = GameServer.join(game_id, gote_player, :gote)
 
-    # Notifica cada jogador no canal individual deles
-    broadcast_player(player1, {:matched, game_id, :sente})
-    broadcast_player(player2, {:matched, game_id, :gote})
-
-    game_id
+    %{
+      sente: %{
+        event: :matched,
+        game_id: game_id,
+        side: :sente,
+        player_id: sente_player,
+        opponent: gote_player
+      },
+      gote: %{
+        event: :matched,
+        game_id: game_id,
+        side: :gote,
+        player_id: gote_player,
+        opponent: sente_player
+      }
+    }
   end
 
-  defp notify_waiting(player_id) do
-    broadcast_player(player_id, :waiting)
+  defp assign_random_sides(player1, player2) do
+    case Enum.random([:normal, :swapped]) do
+      :normal -> {player1, player2}
+      :swapped -> {player2, player1}
+    end
   end
 
-  defp broadcast_player(player_id, message) do
-    Phoenix.PubSub.broadcast(Shogi.PubSub, "player:#{player_id}", message)
+  defp start_game(game_id) do
+    case DynamicSupervisor.start_child(Shogi.Game.Supervisor, {GameServer, game_id: game_id}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+  end
+
+  defp notify_player(player_id, match) do
+    Phoenix.PubSub.broadcast(Shogi.PubSub, "matchmaking:#{player_id}", match)
   end
 
   defp generate_id do
-    :crypto.strong_rand_bytes(8)
+    8
+    |> :crypto.strong_rand_bytes()
     |> Base.url_encode64(padding: false)
   end
 end
