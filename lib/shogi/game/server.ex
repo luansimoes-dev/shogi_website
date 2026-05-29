@@ -38,6 +38,8 @@ defmodule Shogi.Game.Server do
     :turn,
     :phase,
     :winner,
+    :result_reason,
+    :resigned_by,
     :players,
     :move_count,
     :last_move,
@@ -85,6 +87,8 @@ defmodule Shogi.Game.Server do
       turn: :sente,
       phase: :waiting,
       winner: nil,
+      result_reason: nil,
+      resigned_by: nil,
       players: %{sente: nil, gote: nil},
       move_count: 0,
       last_move: nil,
@@ -244,14 +248,33 @@ defmodule Shogi.Game.Server do
         new_state =
           state
           |> cancel_turn_timer()
-          |> then(&%{&1 | phase: :finished, winner: winner})
+          |> then(
+            &%{
+              &1
+              | phase: :finished,
+                winner: winner,
+                result_reason: :resignation,
+                resigned_by: side
+            }
+          )
 
-        broadcast(new_state, {:game_over, %{winner: winner, reason: :resignation}})
-        {:reply, {:ok, winner}, new_state}
+        public = public_state(new_state)
+        broadcast(new_state, {:game_updated, public})
+
+        broadcast(
+          new_state,
+          {:game_over, %{winner: winner, reason: :resignation, resigned_by: side}}
+        )
+
+        {:reply, {:ok, public}, new_state, @idle_timeout}
 
       :error ->
         {:reply, {:error, :not_a_player}, state, @idle_timeout}
     end
+  end
+
+  def handle_call({:resign, _player_id}, _from, %{phase: :finished} = state) do
+    {:reply, {:error, :game_already_finished}, state, @idle_timeout}
   end
 
   def handle_call({:resign, _player_id}, _from, state) do
@@ -267,8 +290,16 @@ defmodule Shogi.Game.Server do
   def handle_info(:turn_timeout, %{phase: :playing} = state) do
     winner = other_side(state.turn)
 
-    new_state = %{state | phase: :finished, winner: winner, turn_timer_ref: nil}
+    new_state = %{
+      state
+      | phase: :finished,
+        winner: winner,
+        result_reason: :timeout,
+        turn_timer_ref: nil
+    }
 
+    public = public_state(new_state)
+    broadcast(new_state, {:game_updated, public})
     broadcast(new_state, {:game_over, %{winner: winner, reason: :timeout}})
     {:noreply, new_state}
   end
@@ -300,7 +331,7 @@ defmodule Shogi.Game.Server do
 
       state
       |> cancel_turn_timer()
-      |> then(&%{&1 | phase: :finished, winner: winner})
+      |> then(&%{&1 | phase: :finished, winner: winner, result_reason: :checkmate})
     else
       state
     end
@@ -365,6 +396,8 @@ defmodule Shogi.Game.Server do
       turn: state.turn,
       phase: state.phase,
       winner: state.winner,
+      result_reason: state.result_reason,
+      resigned_by: state.resigned_by,
       players: state.players,
       move_count: state.move_count,
       last_move: state.last_move,

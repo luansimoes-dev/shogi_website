@@ -561,3 +561,62 @@ a {
     transform: rotate(360deg);
   }
 }
+.resign-button {
+  background: #dc2626;
+  color: white;
+}
+
+.resign-confirmation {
+  margin-top: 14px;
+  border: 1px solid rgba(180, 35, 24, 0.24);
+  border-radius: 8px;
+  background: #fff1ed;
+  padding: 14px;
+}
+
+.resign-confirmation p {
+  margin: 0 0 12px;
+  color: var(--danger);
+  font-weight: 850;
+}
+
+.game-result-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31, 41, 51, 0.48);
+  padding: 20px;
+}
+
+.game-result-card {
+  width: min(420px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  padding: 28px;
+  text-align: center;
+}
+
+.game-result-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.8rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.game-result-reason {
+  margin: 12px 0 22px;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.game-result-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}

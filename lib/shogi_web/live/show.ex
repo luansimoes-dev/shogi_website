@@ -25,6 +25,7 @@ defmodule ShogiWeb.GameLive.Show do
      |> assign(:selected, nil)
      |> assign(:selected_drop, nil)
      |> assign(:pending_promotion, nil)
+     |> assign(:confirm_resign, false)
      |> assign(:move_error, nil)
      |> assign(:game, game)}
   end
@@ -53,7 +54,8 @@ defmodule ShogiWeb.GameLive.Show do
 
   @impl true
   def handle_event("select_drop", %{"type" => type, "side" => side}, socket) do
-    with {:ok, type} <- parse_piece_type(type),
+    with :ok <- ensure_game_active(socket),
+         {:ok, type} <- parse_piece_type(type),
          {:ok, side} <- parse_side(side),
          :ok <- validate_drop_selection(socket, type, side) do
       {:noreply,
@@ -73,6 +75,9 @@ defmodule ShogiWeb.GameLive.Show do
     pos = {String.to_integer(row), String.to_integer(col)}
 
     cond do
+      finished?(socket.assigns.game) ->
+        {:noreply, assign(socket, :move_error, "A partida ja terminou.")}
+
       socket.assigns.pending_promotion != nil ->
         {:noreply, assign(socket, :move_error, "Escolha se deseja promover antes de continuar.")}
 
@@ -101,26 +106,59 @@ defmodule ShogiWeb.GameLive.Show do
   def handle_event("confirm_promotion", %{"promote" => promote}, socket) do
     promote? = promote == "true"
 
-    case socket.assigns.pending_promotion do
-      %{from: from, to: to} ->
-        {:noreply, execute_move(socket, from, to, promote?)}
+    if finished?(socket.assigns.game) do
+      {:noreply, assign(socket, :move_error, "A partida ja terminou.")}
+    else
+      case socket.assigns.pending_promotion do
+        %{from: from, to: to} ->
+          {:noreply, execute_move(socket, from, to, promote?)}
 
-      nil ->
-        {:noreply, assign(socket, :move_error, "Nao ha promocao pendente.")}
+        nil ->
+          {:noreply, assign(socket, :move_error, "Nao ha promocao pendente.")}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("request_resign", _params, socket) do
+    if can_resign?(socket.assigns.game, socket.assigns.side) do
+      {:noreply, assign(socket, :confirm_resign, true)}
+    else
+      {:noreply, assign(socket, :move_error, "Nao e possivel desistir agora.")}
+    end
+  end
+
+  def handle_event("cancel_resign", _params, socket) do
+    {:noreply, assign(socket, :confirm_resign, false)}
+  end
+
+  def handle_event("confirm_resign", _params, socket) do
+    case Server.resign(socket.assigns.game_id, socket.assigns.player_id) do
+      {:ok, game} ->
+        {:noreply,
+         socket
+         |> clear_interaction()
+         |> assign(:game, game)}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(:confirm_resign, false)
+         |> assign(:move_error, error_text(reason))}
     end
   end
 
   @impl true
   def handle_info({:game_updated, game}, socket) do
-    {:noreply, assign(socket, :game, game)}
+    {:noreply, assign_game(socket, game)}
   end
 
   def handle_info({:game_started, game}, socket) do
-    {:noreply, assign(socket, :game, game)}
+    {:noreply, assign_game(socket, game)}
   end
 
   def handle_info({:game_over, _info}, socket) do
-    {:noreply, assign(socket, :game, Server.state(socket.assigns.game_id))}
+    {:noreply, assign_game(socket, Server.state(socket.assigns.game_id))}
   end
 
   defp select_square(socket, pos, piece) do
@@ -217,6 +255,7 @@ defmodule ShogiWeb.GameLive.Show do
 
   defp validate_drop_selection(socket, type, side) do
     cond do
+      finished?(socket.assigns.game) -> {:error, :game_finished}
       socket.assigns.player_id == nil -> {:error, :not_a_player}
       side != socket.assigns.side -> {:error, :not_your_piece}
       side != socket.assigns.game.turn -> {:error, :not_your_turn}
@@ -230,8 +269,28 @@ defmodule ShogiWeb.GameLive.Show do
     |> assign(:selected, nil)
     |> assign(:selected_drop, nil)
     |> assign(:pending_promotion, nil)
+    |> assign(:confirm_resign, false)
     |> assign(:move_error, nil)
   end
+
+  defp assign_game(socket, %{phase: :finished} = game) do
+    socket
+    |> clear_interaction()
+    |> assign(:game, game)
+  end
+
+  defp assign_game(socket, game), do: assign(socket, :game, game)
+
+  defp ensure_game_active(socket) do
+    if finished?(socket.assigns.game), do: {:error, :game_finished}, else: :ok
+  end
+
+  defp finished?(%{phase: :finished}), do: true
+  defp finished?(%{winner: winner}) when winner != nil, do: true
+  defp finished?(_game), do: false
+
+  defp can_resign?(%{phase: :playing}, side) when side in [:sente, :gote], do: true
+  defp can_resign?(_game, _side), do: false
 
   defp side_for_player(%{players: %{sente: player_id}}, player_id) when is_binary(player_id),
     do: :sente
@@ -325,12 +384,36 @@ defmodule ShogiWeb.GameLive.Show do
   defp selected_label(nil), do: "Nenhuma"
   defp selected_label({row, col}), do: "row #{row}, col #{col}"
 
+  defp result_title(game, viewer_side) do
+    cond do
+      game.winner == nil -> "Partida finalizada"
+      viewer_side == nil -> "#{side_label(game.winner)} venceu"
+      game.winner == viewer_side -> "Voce venceu!"
+      true -> "Voce perdeu."
+    end
+  end
+
+  defp result_reason(%{result_reason: :checkmate}, _viewer_side), do: "Vitoria por xeque-mate."
+
+  defp result_reason(%{result_reason: :resignation, resigned_by: resigned_by}, viewer_side) do
+    cond do
+      resigned_by == viewer_side -> "Voce desistiu."
+      viewer_side in [:sente, :gote] -> "O adversario desistiu."
+      true -> "#{side_label(resigned_by)} desistiu."
+    end
+  end
+
+  defp result_reason(%{result_reason: :timeout}, _viewer_side), do: "Vitoria por tempo."
+  defp result_reason(_game, _viewer_side), do: "Partida finalizada."
+
   defp error_text(:game_not_found), do: "Essa partida expirou."
   defp error_text(:side_taken), do: "Esse lado ja esta ocupado."
   defp error_text(:already_joined), do: "Voce ja entrou nesta partida."
   defp error_text(:game_not_waiting), do: "A partida ja comecou."
   defp error_text(:game_not_started), do: "A partida ainda nao comecou."
   defp error_text(:game_finished), do: "A partida ja terminou."
+  defp error_text(:game_already_finished), do: "A partida ja terminou."
+  defp error_text(:cannot_resign), do: "Nao e possivel desistir agora."
   defp error_text(:not_your_turn), do: "Nao e o seu turno."
   defp error_text(:not_your_piece), do: "Essa peca nao e sua."
   defp error_text(:not_a_player), do: "Entre como Sente ou Gote antes de jogar."

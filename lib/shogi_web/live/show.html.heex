@@ -4,7 +4,7 @@
       <p class="eyebrow">Partida</p>
       <h1>Shogi</h1>
       <p class="muted">Game ID: <strong><%= @game_id %></strong></p>
-    </div>
+</div>
 
     <dl class="info-grid">
       <div>
@@ -48,6 +48,12 @@
       >
         Entrar Gote
       </button>
+
+      <%= if can_resign?(@game, @side) do %>
+        <button type="button" class="btn resign-button" phx-click="request_resign">
+          Desistir
+        </button>
+      <% end %>
     </div>
 
     <%= if @move_error do %>
@@ -56,7 +62,23 @@
       </div>
     <% end %>
 
-    <%= if @pending_promotion do %>
+    <%= if @confirm_resign do %>
+      <div class="resign-confirmation" role="dialog" aria-live="polite">
+        <p>Tem certeza que deseja desistir?</p>
+
+        <div class="promotion-actions">
+          <button type="button" class="btn resign-button" phx-click="confirm_resign">
+            Confirmar desistência
+          </button>
+
+          <button type="button" class="btn secondary" phx-click="cancel_resign">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    <% end %>
+
+    <%= if @pending_promotion != nil and not finished?(@game) do %>
       <div class="promotion-choice" role="dialog" aria-live="polite">
         <p>Deseja promover esta peça?</p>
 
@@ -93,6 +115,7 @@
               phx-value-row={row}
               phx-value-col={col}
               aria-label={"Casa row #{row}, col #{col}"}
+              disabled={finished?(@game)}
             >
               <%= if piece do %>
                 <span class={["piece", to_string(piece.owner), piece_orientation_class(piece, @side)]}>
@@ -118,7 +141,7 @@
           <span class="empty-hand">Sem pecas</span>
         <% else %>
           <%= for piece <- hand.pieces do %>
-            <%= if hand.clickable? do %>
+            <%= if hand[:clickable?] and not finished?(@game) do %>
               <button
                 type="button"
                 class={[
@@ -147,5 +170,20 @@
         <% end %>
       </div>
     </aside>
+  <% end %>
+
+  <%= if finished?(@game) do %>
+    <div class="game-result-overlay" role="dialog" aria-live="polite">
+      <section class="game-result-card">
+        <p class="eyebrow">Fim de jogo</p>
+        <h2 class="game-result-title"><%= result_title(@game, @side) %></h2>
+        <p class="game-result-reason"><%= result_reason(@game, @side) %></p>
+
+        <div class="game-result-actions">
+          <a class="btn secondary" href="/">Voltar ao lobby</a>
+          <a class="btn sente" href="/play">Nova partida</a>
+        </div>
+      </section>
+    </div>
   <% end %>
 </div>
