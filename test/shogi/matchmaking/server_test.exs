@@ -20,7 +20,7 @@ defmodule Shogi.Matchmaking.ServerTest do
   end
 
   test "join_queue returns waiting for first player", %{player1: player1} do
-    assert {:waiting} = Matchmaking.join_queue(player1)
+    assert {:waiting} = Matchmaking.join_queue(player1, "10_2")
     assert Matchmaking.status(player1) == :waiting
   end
 
@@ -30,10 +30,11 @@ defmodule Shogi.Matchmaking.ServerTest do
   } do
     Phoenix.PubSub.subscribe(Shogi.PubSub, "matchmaking:#{player1}")
 
-    assert {:waiting} = Matchmaking.join_queue(player1)
+    assert {:waiting} = Matchmaking.join_queue(player1, "10_2")
 
-    assert {:matched, %{game_id: game_id, side: second_side, opponent: ^player1}} =
-             Matchmaking.join_queue(player2)
+    assert {:matched,
+            %{game_id: game_id, side: second_side, opponent: ^player1, time_control_id: "10_2"}} =
+             Matchmaking.join_queue(player2, "10_2")
 
     assert second_side in [:sente, :gote]
 
@@ -46,6 +47,30 @@ defmodule Shogi.Matchmaking.ServerTest do
     assert game.players.sente != game.players.gote
     assert Enum.sort([game.players.sente, game.players.gote]) == Enum.sort([player1, player2])
     assert game.phase == :playing
+    assert game.time_control.id == "10_2"
+  end
+
+  test "players in different time control queues are not matched", %{
+    player1: player1,
+    player2: player2
+  } do
+    assert {:waiting} = Matchmaking.join_queue(player1, "3_0")
+    assert {:waiting} = Matchmaking.join_queue(player2, "5_0")
+
+    assert Matchmaking.queue_size("3_0") == 1
+    assert Matchmaking.queue_size("5_0") == 1
+  end
+
+  test "same time control players are matched and game receives time control", %{
+    player1: player1,
+    player2: player2
+  } do
+    assert {:waiting} = Matchmaking.join_queue(player1, "15_10")
+
+    assert {:matched, %{game_id: game_id, time_control_id: "15_10"}} =
+             Matchmaking.join_queue(player2, "15_10")
+
+    assert GameServer.state(game_id).time_control.id == "15_10"
   end
 
   test "random side assignment can choose either player as sente" do
@@ -57,8 +82,8 @@ defmodule Shogi.Matchmaking.ServerTest do
         Matchmaking.leave_queue(player1)
         Matchmaking.leave_queue(player2)
 
-        assert {:waiting} = Matchmaking.join_queue(player1)
-        assert {:matched, %{game_id: game_id}} = Matchmaking.join_queue(player2)
+        assert {:waiting} = Matchmaking.join_queue(player1, "10_2")
+        assert {:matched, %{game_id: game_id}} = Matchmaking.join_queue(player2, "10_2")
 
         game = GameServer.state(game_id)
         assert game.players.sente != game.players.gote
@@ -72,13 +97,13 @@ defmodule Shogi.Matchmaking.ServerTest do
   end
 
   test "entering twice does not duplicate queue entry", %{player1: player1} do
-    assert {:waiting} = Matchmaking.join_queue(player1)
-    assert {:waiting} = Matchmaking.join_queue(player1)
-    assert Matchmaking.queue_size() == 1
+    assert {:waiting} = Matchmaking.join_queue(player1, "10_2")
+    assert {:waiting} = Matchmaking.join_queue(player1, "10_2")
+    assert Matchmaking.queue_size("10_2") == 1
   end
 
   test "leave_queue removes waiting player", %{player1: player1} do
-    assert {:waiting} = Matchmaking.join_queue(player1)
+    assert {:waiting} = Matchmaking.join_queue(player1, "10_2")
     assert :ok = Matchmaking.leave_queue(player1)
     assert Matchmaking.status(player1) == :idle
   end

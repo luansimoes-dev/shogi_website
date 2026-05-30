@@ -16,8 +16,9 @@ defmodule ShogiWeb.PlayLiveTest do
   test "shows play button and enters waiting state", %{conn: conn, player_id: player_id} do
     conn = init_test_session(conn, %{player_id: player_id})
 
-    {:ok, view, html} = live(conn, ~p"/play")
+    {:ok, view, html} = live(conn, ~p"/play?tc=5_0")
     assert html =~ "Procurar partida"
+    assert html =~ "5 + 0"
 
     html = render_click(view, "find_match")
     assert html =~ "Procurando adversario"
@@ -26,7 +27,7 @@ defmodule ShogiWeb.PlayLiveTest do
   test "cancel returns to idle state", %{conn: conn, player_id: player_id} do
     conn = init_test_session(conn, %{player_id: player_id})
 
-    {:ok, view, _html} = live(conn, ~p"/play")
+    {:ok, view, _html} = live(conn, ~p"/play?tc=5_0")
     render_click(view, "find_match")
     html = render_click(view, "cancel_match")
 
@@ -36,11 +37,11 @@ defmodule ShogiWeb.PlayLiveTest do
   test "redirects when receiving match", %{conn: conn, player_id: player_id} do
     conn = init_test_session(conn, %{player_id: player_id})
 
-    {:ok, view, _html} = live(conn, ~p"/play")
+    {:ok, view, _html} = live(conn, ~p"/play?tc=5_0")
     render_click(view, "find_match")
 
     other_player = "player-live-" <> Integer.to_string(System.unique_integer([:positive]))
-    assert {:matched, %{game_id: game_id}} = Matchmaking.join_queue(other_player)
+    assert {:matched, %{game_id: game_id}} = Matchmaking.join_queue(other_player, "5_0")
 
     assert_redirect(view, ~p"/game/#{game_id}")
   end

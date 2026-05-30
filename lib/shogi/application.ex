@@ -4,6 +4,7 @@ defmodule Shogi.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      Shogi.Repo,
       {Phoenix.PubSub, name: Shogi.PubSub},
       {Registry, keys: :unique, name: Shogi.Game.Registry},
       {DynamicSupervisor, name: Shogi.Game.Supervisor, strategy: :one_for_one},

@@ -18,6 +18,11 @@
       </div>
 
       <div>
+        <dt>Tempo</dt>
+        <dd><%= time_control_label(@game) %></dd>
+      </div>
+
+      <div>
         <dt>Seu lado</dt>
         <dd><%= side_label(@side) %></dd>
       </div>
@@ -96,6 +101,16 @@
   </section>
 
   <section class="card board-card">
+    <% top = top_side(@side) %>
+    <% bottom = bottom_side(@side) %>
+
+    <div class="clock-row top-clock">
+      <div class={clock_class(@game, top)}>
+        <span><%= side_label(top) %></span>
+        <strong><%= format_clock(@game.clocks[top]) %></strong>
+      </div>
+    </div>
+
     <div class="board-wrapper">
       <div class="shogi-board" aria-label="Tabuleiro de Shogi">
         <%= for row <- board_rows(@side) do %>
@@ -125,6 +140,13 @@
             </button>
           <% end %>
         <% end %>
+      </div>
+    </div>
+
+    <div class="clock-row bottom-clock">
+      <div class={clock_class(@game, bottom)}>
+        <span><%= side_label(bottom) %></span>
+        <strong><%= format_clock(@game.clocks[bottom]) %></strong>
       </div>
     </div>
   </section>
@@ -182,6 +204,7 @@
         <div class="game-result-actions">
           <a class="btn secondary" href="/">Voltar ao lobby</a>
           <a class="btn sente" href="/play">Nova partida</a>
+          <.link navigate={~p"/game/#{@game_id}/replay"} class="btn secondary">Ver replay</.link>
         </div>
       </section>
     </div>

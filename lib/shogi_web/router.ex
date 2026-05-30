@@ -20,6 +20,7 @@ defmodule ShogiWeb.Router do
 
     live("/", LobbyLive, :index)
     live("/play", PlayLive, :index)
+    live("/game/:game_id/replay", GameReplayLive, :index)
     live("/game/:game_id", GameLive.Show, :index)
   end
 

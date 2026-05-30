@@ -1,36 +1,16 @@
 defmodule Shogi.Game.Server do
   @moduledoc """
   GenServer responsável pelo estado e ciclo de vida de uma partida.
-
-  Timeouts:
-  - @idle_timeout: encerra o processo se nenhuma mensagem chegar (jogadores abandonaram)
-  - @turn_timeout: encerra o turno/partida se o jogador demorar demais para jogar
-
-  ## Uso
-
-      {:ok, pid} = Shogi.Game.Server.start_link(game_id: "abc123")
-
-      Shogi.Game.Server.join(pid, "player1", :sente)
-      Shogi.Game.Server.join(pid, "player2", :gote)
-
-      Shogi.Game.Server.move(pid, "player1", {7, 7}, {7, 6})
-      Shogi.Game.Server.move(pid, "player1", {7, 7}, {7, 6}, promote: true)
-      Shogi.Game.Server.drop(pid, "player2", :pawn, {5, 5})
   """
 
   use GenServer
 
-  alias Shogi.Game.{Board, Rules}
+  alias Shogi.Game.{Board, Rules, TimeControl}
+  alias Shogi.Games
 
-  # Encerra o processo se ficar 10 min sem nenhuma mensagem (processo zumbi)
+  require Logger
+
   @idle_timeout 10 * 60 * 1_000
-
-  # Tempo máximo por turno — perde quem deixar estourar
-  @turn_timeout 5 * 60 * 1_000
-
-  # ---------------------------------------------------------------------------
-  # Estado interno
-  # ---------------------------------------------------------------------------
 
   defstruct [
     :game_id,
@@ -40,19 +20,19 @@ defmodule Shogi.Game.Server do
     :winner,
     :result_reason,
     :resigned_by,
+    :timed_out_side,
+    :time_control,
+    :clocks,
+    :active_turn_started_at,
+    :clock_timer_ref,
     :players,
     :move_count,
-    :last_move,
-    :turn_timer_ref
+    :last_move
   ]
-
-  # ---------------------------------------------------------------------------
-  # API pública
-  # ---------------------------------------------------------------------------
 
   def start_link(opts) do
     game_id = Keyword.fetch!(opts, :game_id)
-    GenServer.start_link(__MODULE__, game_id, name: via(game_id))
+    GenServer.start_link(__MODULE__, opts, name: via(game_id))
   end
 
   def join(game_id, player_id, side) when side in [:sente, :gote] do
@@ -75,13 +55,41 @@ defmodule Shogi.Game.Server do
     GenServer.call(via(game_id), {:resign, player_id})
   end
 
-  # ---------------------------------------------------------------------------
-  # Callbacks
-  # ---------------------------------------------------------------------------
-
   @impl true
-  def init(game_id) do
-    state = %__MODULE__{
+  def init(opts) do
+    game_id = Keyword.fetch!(opts, :game_id)
+    time_control = Keyword.get(opts, :time_control, TimeControl.default())
+
+    state =
+      case Keyword.get(opts, :restored_state) || Games.restore_game_state(game_id) do
+        {:ok, restored_state} ->
+          %{
+            restored_state
+            | active_turn_started_at: turn_started_at(restored_state),
+              clock_timer_ref: nil
+          }
+          |> restart_clock_timer()
+
+        %__MODULE__{} = restored_state ->
+          %{
+            restored_state
+            | active_turn_started_at: turn_started_at(restored_state),
+              clock_timer_ref: nil
+          }
+          |> restart_clock_timer()
+
+        _ ->
+          new_state(game_id, time_control)
+          |> tap(&persist_create/1)
+      end
+
+    {:ok, state, timeout_for(state)}
+  end
+
+  defp new_state(game_id, time_control) do
+    initial_seconds = time_control.initial_seconds
+
+    %__MODULE__{
       game_id: game_id,
       board: Board.new(),
       turn: :sente,
@@ -89,18 +97,29 @@ defmodule Shogi.Game.Server do
       winner: nil,
       result_reason: nil,
       resigned_by: nil,
+      timed_out_side: nil,
+      time_control: time_control,
+      clocks: %{sente: initial_seconds, gote: initial_seconds},
+      active_turn_started_at: nil,
+      clock_timer_ref: nil,
       players: %{sente: nil, gote: nil},
       move_count: 0,
-      last_move: nil,
-      turn_timer_ref: nil
+      last_move: nil
     }
-
-    {:ok, state, @idle_timeout}
   end
 
-  # ---------------------------------------------------------------------------
-  # join
-  # ---------------------------------------------------------------------------
+  defp turn_started_at(%{phase: :playing}), do: now_ms()
+  defp turn_started_at(_state), do: nil
+
+  defp persist_create(state) do
+    case Games.create_game_record(state.game_id, state) do
+      {:ok, _record} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("failed to create game record #{state.game_id}: #{inspect(reason)}")
+    end
+  end
 
   @impl true
   def handle_call({:join, player_id, side}, _from, %{phase: :waiting} = state) do
@@ -117,48 +136,24 @@ defmodule Shogi.Game.Server do
 
         new_state =
           %{state | players: new_players, phase: new_phase}
-          |> maybe_start_turn_timer(new_phase)
+          |> maybe_start_clock(new_phase)
+
+        persist_player_and_state(new_state, player_id, side)
 
         if new_phase == :playing do
           broadcast(new_state, {:game_started, public_state(new_state)})
         end
 
-        {:reply, {:ok, new_phase}, new_state, @idle_timeout}
+        {:reply, {:ok, new_phase}, new_state, timeout_for(new_state)}
     end
   end
 
   def handle_call({:join, _player_id, _side}, _from, state) do
-    {:reply, {:error, :game_not_waiting}, state, @idle_timeout}
+    {:reply, {:error, :game_not_waiting}, state, timeout_for(state)}
   end
 
-  # ---------------------------------------------------------------------------
-  # move
-  # ---------------------------------------------------------------------------
-
-  def handle_call({:move, player_id, from, to, opts}, _from, %{phase: :waiting} = state) do
-    piece = Board.get(state.board, from)
-    promote = Keyword.get(opts, :promote, false) or Board.must_promote?(piece, to, state.turn)
-
-    with true <- player_id != nil,
-         :ok <- check_turn(state, player_id),
-         true <- state.players.sente == player_id and state.turn == :sente,
-         true <- Rules.valid_move?(state.board, from, to, state.turn),
-         {:ok, new_board, captured} <- Board.move(state.board, from, to, promote) do
-      new_state = %{
-        state
-        | board: new_board,
-          turn: next_turn(state.turn),
-          move_count: state.move_count + 1,
-          last_move: {:move, from, to, promote, captured}
-      }
-
-      broadcast(new_state, {:game_updated, public_state(new_state)})
-
-      {:reply, {:ok, public_state(new_state)}, new_state, @idle_timeout}
-    else
-      false -> {:reply, {:error, :game_not_started}, state, @idle_timeout}
-      {:error, reason} -> {:reply, {:error, reason}, state, @idle_timeout}
-    end
+  def handle_call({:move, _player_id, _from, _to, _opts}, _from_ref, %{phase: :waiting} = state) do
+    {:reply, {:error, :game_not_started}, state, @idle_timeout}
   end
 
   def handle_call({:move, _, _, _, _}, _from, %{phase: :finished} = state) do
@@ -172,29 +167,43 @@ defmodule Shogi.Game.Server do
     with :ok <- check_turn(state, player_id),
          true <- Rules.valid_move?(state.board, from, to, state.turn),
          {:ok, new_board, captured} <- Board.move(state.board, from, to, promote) do
+      state = apply_elapsed_clock(state)
+
       new_state =
-        %{
+        if out_of_time?(state, state.turn) do
+          finish_by_timeout(state, state.turn)
+        else
           state
-          | board: new_board,
-            turn: next_turn(state.turn),
-            move_count: state.move_count + 1,
-            last_move: {:move, from, to, promote, captured}
-        }
-        |> restart_turn_timer()
-        |> maybe_finish()
+          |> add_increment(state.turn)
+          |> then(fn state ->
+            %{
+              state
+              | board: new_board,
+                turn: next_turn(state.turn),
+                move_count: state.move_count + 1,
+                last_move: {:move, from, to, promote, captured},
+                active_turn_started_at: now_ms()
+            }
+          end)
+          |> restart_clock_timer()
+          |> maybe_finish()
+        end
 
-      broadcast(new_state, {:game_updated, public_state(new_state)})
+      persist_move_event(
+        state,
+        new_state,
+        player_id,
+        move_attrs_for_move(new_state, player_id, state.turn, from, to, piece, captured, promote)
+      )
 
-      {:reply, {:ok, public_state(new_state)}, new_state, @idle_timeout}
+      public = public_state(new_state)
+      broadcast(new_state, {:game_updated, public})
+      {:reply, {:ok, public}, new_state, timeout_for(new_state)}
     else
-      false -> {:reply, {:error, :invalid_move}, state, @idle_timeout}
-      {:error, reason} -> {:reply, {:error, reason}, state, @idle_timeout}
+      false -> {:reply, {:error, :invalid_move}, state, timeout_for(state)}
+      {:error, reason} -> {:reply, {:error, reason}, state, timeout_for(state)}
     end
   end
-
-  # ---------------------------------------------------------------------------
-  # drop
-  # ---------------------------------------------------------------------------
 
   def handle_call({:drop, _, _, _}, _from, %{phase: :waiting} = state) do
     {:reply, {:error, :game_not_started}, state, @idle_timeout}
@@ -208,37 +217,47 @@ defmodule Shogi.Game.Server do
     with :ok <- check_turn(state, player_id),
          true <- Rules.valid_drop?(state.board, type, to, state.turn),
          {:ok, new_board} <- Board.drop(state.board, type, to, state.turn) do
+      state = apply_elapsed_clock(state)
+
       new_state =
-        %{
+        if out_of_time?(state, state.turn) do
+          finish_by_timeout(state, state.turn)
+        else
           state
-          | board: new_board,
-            turn: next_turn(state.turn),
-            move_count: state.move_count + 1,
-            last_move: {:drop, type, to}
-        }
-        |> restart_turn_timer()
-        |> maybe_finish()
+          |> add_increment(state.turn)
+          |> then(fn state ->
+            %{
+              state
+              | board: new_board,
+                turn: next_turn(state.turn),
+                move_count: state.move_count + 1,
+                last_move: {:drop, type, to},
+                active_turn_started_at: now_ms()
+            }
+          end)
+          |> restart_clock_timer()
+          |> maybe_finish()
+        end
 
-      broadcast(new_state, {:game_updated, public_state(new_state)})
+      persist_move_event(
+        state,
+        new_state,
+        player_id,
+        move_attrs_for_drop(new_state, player_id, state.turn, type, to)
+      )
 
-      {:reply, {:ok, public_state(new_state)}, new_state, @idle_timeout}
+      public = public_state(new_state)
+      broadcast(new_state, {:game_updated, public})
+      {:reply, {:ok, public}, new_state, timeout_for(new_state)}
     else
-      false -> {:reply, {:error, :invalid_drop}, state, @idle_timeout}
-      {:error, reason} -> {:reply, {:error, reason}, state, @idle_timeout}
+      false -> {:reply, {:error, :invalid_drop}, state, timeout_for(state)}
+      {:error, reason} -> {:reply, {:error, reason}, state, timeout_for(state)}
     end
   end
 
-  # ---------------------------------------------------------------------------
-  # state
-  # ---------------------------------------------------------------------------
-
   def handle_call(:state, _from, state) do
-    {:reply, public_state(state), state, @idle_timeout}
+    {:reply, public_state(state), state, timeout_for(state)}
   end
-
-  # ---------------------------------------------------------------------------
-  # resign
-  # ---------------------------------------------------------------------------
 
   def handle_call({:resign, player_id}, _from, %{phase: :playing} = state) do
     case side_of(state, player_id) do
@@ -247,16 +266,27 @@ defmodule Shogi.Game.Server do
 
         new_state =
           state
-          |> cancel_turn_timer()
-          |> then(
-            &%{
-              &1
+          |> apply_elapsed_clock()
+          |> cancel_clock_timer()
+          |> then(fn state ->
+            %{
+              state
               | phase: :finished,
                 winner: winner,
                 result_reason: :resignation,
-                resigned_by: side
+                resigned_by: side,
+                move_count: state.move_count + 1,
+                active_turn_started_at: nil,
+                last_move: :resign
             }
-          )
+          end)
+
+        persist_move_event(
+          state,
+          new_state,
+          player_id,
+          move_attrs_for_terminal(new_state, player_id, side, :resign)
+        )
 
         public = public_state(new_state)
         broadcast(new_state, {:game_updated, public})
@@ -269,7 +299,7 @@ defmodule Shogi.Game.Server do
         {:reply, {:ok, public}, new_state, @idle_timeout}
 
       :error ->
-        {:reply, {:error, :not_a_player}, state, @idle_timeout}
+        {:reply, {:error, :not_a_player}, state, timeout_for(state)}
     end
   end
 
@@ -278,59 +308,56 @@ defmodule Shogi.Game.Server do
   end
 
   def handle_call({:resign, _player_id}, _from, state) do
-    {:reply, {:error, :cannot_resign}, state, @idle_timeout}
+    {:reply, {:error, :cannot_resign}, state, timeout_for(state)}
   end
 
-  # ---------------------------------------------------------------------------
-  # handle_info
-  # ---------------------------------------------------------------------------
-
-  # Turno estourou — quem estava jogando perde
   @impl true
-  def handle_info(:turn_timeout, %{phase: :playing} = state) do
-    winner = other_side(state.turn)
+  def handle_info({:clock_timeout, side, move_count}, state) do
+    if state.phase == :playing and state.turn == side and state.move_count == move_count do
+      new_state = finish_by_timeout(state, side)
+      player_id = player_id_for_side(new_state, side)
 
-    new_state = %{
-      state
-      | phase: :finished,
-        winner: winner,
-        result_reason: :timeout,
-        turn_timer_ref: nil
-    }
+      persist_move_event(
+        state,
+        new_state,
+        player_id,
+        move_attrs_for_terminal(new_state, player_id, side, :timeout)
+      )
 
-    public = public_state(new_state)
-    broadcast(new_state, {:game_updated, public})
-    broadcast(new_state, {:game_over, %{winner: winner, reason: :timeout}})
-    {:noreply, new_state}
-  end
+      public = public_state(new_state)
+      broadcast(new_state, {:game_updated, public})
 
-  # Processo zumbi — nenhuma mensagem por @idle_timeout ms
-  # Pode acontecer em :waiting (ninguém entrou) ou :finished (já acabou)
-  def handle_info(:timeout, state) do
-    if state.phase == :playing do
-      # Segurança: não deveria chegar aqui com turn_timer ativo,
-      # mas encerra limpo se chegar
-      broadcast(state, {:game_over, %{winner: nil, reason: :abandoned}})
+      broadcast(
+        new_state,
+        {:game_over, %{winner: new_state.winner, reason: :timeout, timed_out_side: side}}
+      )
+
+      {:noreply, new_state, @idle_timeout}
+    else
+      {:noreply, state, timeout_for(state)}
     end
-
-    {:stop, :normal, state}
   end
 
-  # Ignora mensagens de timer cancelado que chegam tarde
-  def handle_info(_msg, state) do
+  def handle_info(:timeout, %{phase: :playing} = state) do
     {:noreply, state, @idle_timeout}
   end
 
-  # ---------------------------------------------------------------------------
-  # Helpers privados — lógica de negócio
-  # ---------------------------------------------------------------------------
+  def handle_info(:timeout, state) do
+    {:stop, :normal, state}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state, timeout_for(state)}
+  end
+
+  defp maybe_finish(%{phase: :finished} = state), do: state
 
   defp maybe_finish(state) do
     if Rules.checkmate?(state.board, state.turn) do
       winner = other_side(state.turn)
 
       state
-      |> cancel_turn_timer()
+      |> cancel_clock_timer()
       |> then(&%{&1 | phase: :finished, winner: winner, result_reason: :checkmate})
     else
       state
@@ -363,31 +390,180 @@ defmodule Shogi.Game.Server do
     end
   end
 
-  # ---------------------------------------------------------------------------
-  # Helpers privados — timers
-  # ---------------------------------------------------------------------------
-
-  defp maybe_start_turn_timer(state, :playing), do: start_turn_timer(state)
-  defp maybe_start_turn_timer(state, _phase), do: state
-
-  defp start_turn_timer(state) do
-    ref = Process.send_after(self(), :turn_timeout, @turn_timeout)
-    %{state | turn_timer_ref: ref}
+  defp maybe_start_clock(state, :playing) do
+    %{state | active_turn_started_at: now_ms()}
+    |> restart_clock_timer()
   end
 
-  defp restart_turn_timer(state) do
-    if state.turn_timer_ref, do: Process.cancel_timer(state.turn_timer_ref)
-    start_turn_timer(state)
+  defp maybe_start_clock(state, _phase), do: state
+
+  defp restart_clock_timer(state) do
+    state
+    |> cancel_clock_timer()
+    |> start_clock_timer()
   end
 
-  defp cancel_turn_timer(state) do
-    if state.turn_timer_ref, do: Process.cancel_timer(state.turn_timer_ref)
-    %{state | turn_timer_ref: nil}
+  defp start_clock_timer(%{phase: :playing, turn: side} = state) do
+    remaining_ms = max(Map.fetch!(state.clocks, side), 0) * 1000
+    ref = Process.send_after(self(), {:clock_timeout, side, state.move_count}, remaining_ms)
+    %{state | clock_timer_ref: ref}
   end
 
-  # ---------------------------------------------------------------------------
-  # Helpers privados — estado público
-  # ---------------------------------------------------------------------------
+  defp start_clock_timer(state), do: state
+
+  defp cancel_clock_timer(%{clock_timer_ref: ref} = state) when is_reference(ref) do
+    Process.cancel_timer(ref)
+    %{state | clock_timer_ref: nil}
+  end
+
+  defp cancel_clock_timer(state), do: %{state | clock_timer_ref: nil}
+
+  defp apply_elapsed_clock(
+         %{phase: :playing, active_turn_started_at: started_at, turn: side} = state
+       )
+       when is_integer(started_at) do
+    elapsed = elapsed_seconds_since_turn_started(state)
+    clocks = Map.update!(state.clocks, side, &max(&1 - elapsed, 0))
+    %{state | clocks: clocks, active_turn_started_at: now_ms()}
+  end
+
+  defp apply_elapsed_clock(state), do: state
+
+  defp elapsed_seconds_since_turn_started(%{active_turn_started_at: nil}), do: 0
+
+  defp elapsed_seconds_since_turn_started(state) do
+    max(0, div(now_ms() - state.active_turn_started_at, 1000))
+  end
+
+  defp current_clocks(%{phase: :playing, turn: side} = state) do
+    elapsed = elapsed_seconds_since_turn_started(state)
+    Map.update!(state.clocks, side, &max(&1 - elapsed, 0))
+  end
+
+  defp current_clocks(state), do: state.clocks
+
+  defp add_increment(state, side) do
+    increment = Map.get(state.time_control, :increment_seconds, 0)
+    %{state | clocks: Map.update!(state.clocks, side, &(&1 + increment))}
+  end
+
+  defp out_of_time?(state, side), do: Map.fetch!(state.clocks, side) <= 0
+
+  defp finish_by_timeout(state, side) do
+    state
+    |> cancel_clock_timer()
+    |> then(fn state ->
+      %{
+        state
+        | phase: :finished,
+          winner: other_side(side),
+          result_reason: :timeout,
+          timed_out_side: side,
+          clocks: Map.put(state.clocks, side, 0),
+          active_turn_started_at: nil,
+          move_count: state.move_count + 1,
+          last_move: :timeout
+      }
+    end)
+  end
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
+
+  defp persist_player_and_state(state, player_id, side) do
+    case Games.add_or_update_player(state.game_id, player_id, side) do
+      {:ok, _player} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("failed to persist player #{player_id}: #{inspect(reason)}")
+    end
+
+    case Games.save_game_state(state.game_id, state) do
+      {:ok, _record} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("failed to persist game state #{state.game_id}: #{inspect(reason)}")
+    end
+  end
+
+  defp persist_move_event(_old_state, _new_state, nil, %{kind: :timeout}) do
+    Logger.error("cannot persist timeout move without player_id")
+  end
+
+  defp persist_move_event(_old_state, new_state, _player_id, move_attrs) do
+    case Games.record_move_and_update_game(new_state.game_id, move_attrs, new_state) do
+      {:ok, _result} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("failed to persist move #{new_state.game_id}: #{inspect(reason)}")
+    end
+  end
+
+  defp move_attrs_for_move(new_state, player_id, side, from, to, piece, captured, promote) do
+    {from_row, from_col} = from
+    {to_row, to_col} = to
+
+    %{
+      move_number: new_state.move_count,
+      player_id: player_id,
+      side: side,
+      kind: move_kind(new_state, :move),
+      from_row: from_row,
+      from_col: from_col,
+      to_row: to_row,
+      to_col: to_col,
+      piece_type: piece && piece.type,
+      captured_piece_type: captured,
+      promoted: promote,
+      result_after: new_state.result_reason
+    }
+  end
+
+  defp move_attrs_for_drop(new_state, player_id, side, type, to) do
+    {to_row, to_col} = to
+
+    %{
+      move_number: new_state.move_count,
+      player_id: player_id,
+      side: side,
+      kind: move_kind(new_state, :drop),
+      to_row: to_row,
+      to_col: to_col,
+      piece_type: type,
+      promoted: false,
+      result_after: new_state.result_reason
+    }
+  end
+
+  defp move_attrs_for_terminal(new_state, player_id, side, kind) do
+    %{
+      move_number: new_state.move_count,
+      player_id: player_id,
+      side: side,
+      kind: kind,
+      promoted: false,
+      result_after: new_state.result_reason
+    }
+  end
+
+  defp move_kind(%{result_reason: :timeout}, _kind), do: :timeout
+  defp move_kind(_state, kind), do: kind
+
+  defp player_id_for_side(state, side) do
+    case Map.get(state.players, side) do
+      nil ->
+        Logger.error(
+          "missing player_id for timed out side #{inspect(side)} in game #{state.game_id}"
+        )
+
+        nil
+
+      player_id ->
+        player_id
+    end
+  end
 
   defp public_state(state) do
     %{
@@ -398,21 +574,28 @@ defmodule Shogi.Game.Server do
       winner: state.winner,
       result_reason: state.result_reason,
       resigned_by: state.resigned_by,
+      timed_out_side: state.timed_out_side,
+      time_control: state.time_control,
+      clocks: current_clocks(state),
+      server_time_ms: now_ms(),
       players: state.players,
       move_count: state.move_count,
       last_move: state.last_move,
-      time_left_seconds: time_left(state.turn_timer_ref)
+      time_left_seconds: clock_time_left(state.clock_timer_ref)
     }
   end
 
-  defp time_left(nil), do: nil
+  defp clock_time_left(nil), do: nil
 
-  defp time_left(ref) do
+  defp clock_time_left(ref) do
     case Process.read_timer(ref) do
       false -> 0
       ms -> div(ms, 1_000)
     end
   end
+
+  defp timeout_for(%{phase: :playing}), do: @idle_timeout
+  defp timeout_for(_state), do: @idle_timeout
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Shogi.PubSub, "game:#{state.game_id}", message)

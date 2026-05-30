@@ -7,12 +7,10 @@ defmodule ShogiWeb.GameLive.Show do
   def mount(%{"game_id" => game_id}, session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Shogi.PubSub, "game:#{game_id}")
+      :timer.send_interval(1_000, self(), :clock_tick)
     end
 
-    case Server.start_link(game_id: game_id) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
+    start_game(game_id)
 
     game = Server.state(game_id)
     player_id = session_player_id(session)
@@ -149,6 +147,14 @@ defmodule ShogiWeb.GameLive.Show do
   end
 
   @impl true
+  def handle_info(:clock_tick, socket) do
+    if socket.assigns.game.phase == :playing do
+      {:noreply, assign_game(socket, Server.state(socket.assigns.game_id))}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:game_updated, game}, socket) do
     {:noreply, assign_game(socket, game)}
   end
@@ -159,6 +165,13 @@ defmodule ShogiWeb.GameLive.Show do
 
   def handle_info({:game_over, _info}, socket) do
     {:noreply, assign_game(socket, Server.state(socket.assigns.game_id))}
+  end
+
+  defp start_game(game_id) do
+    case DynamicSupervisor.start_child(Shogi.Game.Supervisor, {Server, game_id: game_id}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
   end
 
   defp select_square(socket, pos, piece) do
@@ -333,6 +346,32 @@ defmodule ShogiWeb.GameLive.Show do
   defp viewer_side_or_default(nil), do: :sente
   defp viewer_side_or_default(side), do: side
 
+  defp top_side(:sente), do: :gote
+  defp top_side(:gote), do: :sente
+  defp top_side(_side), do: :gote
+
+  defp bottom_side(:sente), do: :sente
+  defp bottom_side(:gote), do: :gote
+  defp bottom_side(_side), do: :sente
+
+  defp format_clock(seconds) when is_integer(seconds) do
+    minutes = div(seconds, 60)
+    seconds = rem(seconds, 60)
+    "#{minutes}:#{String.pad_leading(Integer.to_string(seconds), 2, "0")}"
+  end
+
+  defp format_clock(_seconds), do: "--:--"
+
+  defp clock_class(game, side) do
+    seconds = get_in(game, [:clocks, side]) || 0
+
+    [
+      "clock",
+      game.turn == side and game.phase == :playing && "active",
+      seconds <= 10 && "low-time"
+    ]
+  end
+
   defp hand_sections(%{board: board}, :gote) do
     [
       %{title: "Sua mao", side: :gote, pieces: board.hands.gote, clickable?: true},
@@ -381,6 +420,9 @@ defmodule ShogiWeb.GameLive.Show do
   defp phase_label(:finished), do: "Finalizada"
   defp phase_label(phase), do: inspect(phase)
 
+  defp time_control_label(%{time_control: %{label: label}}), do: label
+  defp time_control_label(_game), do: "10 + 2"
+
   defp selected_label(nil), do: "Nenhuma"
   defp selected_label({row, col}), do: "row #{row}, col #{col}"
 
@@ -403,7 +445,17 @@ defmodule ShogiWeb.GameLive.Show do
     end
   end
 
-  defp result_reason(%{result_reason: :timeout}, _viewer_side), do: "Vitoria por tempo."
+  defp result_reason(
+         %{result_reason: :timeout, timed_out_side: timed_out_side, winner: winner},
+         viewer_side
+       ) do
+    cond do
+      timed_out_side == viewer_side -> "Voce perdeu por tempo."
+      winner == viewer_side -> "Voce venceu por tempo."
+      true -> "#{side_label(timed_out_side)} perdeu por tempo."
+    end
+  end
+
   defp result_reason(_game, _viewer_side), do: "Partida finalizada."
 
   defp error_text(:game_not_found), do: "Essa partida expirou."
