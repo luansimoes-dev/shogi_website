@@ -3,6 +3,8 @@ defmodule ShogiWeb.GameLive.Show do
 
   alias Shogi.Game.{Board, Rules, Server}
 
+  import ShogiWeb.Components.GameBoard
+
   @impl true
   def mount(%{"game_id" => game_id}, session, socket) do
     if connected?(socket) do
@@ -320,83 +322,6 @@ defmodule ShogiWeb.GameLive.Show do
   defp own_piece?(%{owner: owner}, side), do: owner == side
   defp own_piece?(_, _side), do: false
 
-  defp square_status(selected, last_move, pos) do
-    cond do
-      selected == pos -> "selected"
-      last_move_highlight?(last_move, pos) -> "last-move"
-      true -> nil
-    end
-  end
-
-  defp selected_drop_class(%{selected_drop: %{type: type, owner: owner}}, type, owner),
-    do: "selected-drop"
-
-  defp selected_drop_class(_assigns, _type, _owner), do: nil
-
-  defp board_rows(:gote), do: 8..0//-1
-  defp board_rows(_side), do: 0..8
-
-  defp board_cols(:gote), do: 8..0//-1
-  defp board_cols(_side), do: 0..8
-
-  defp piece_orientation_class(%{owner: owner}, viewer_side) do
-    if owner == viewer_side_or_default(viewer_side), do: "own-piece", else: "opponent-piece"
-  end
-
-  defp viewer_side_or_default(nil), do: :sente
-  defp viewer_side_or_default(side), do: side
-
-  defp top_side(:sente), do: :gote
-  defp top_side(:gote), do: :sente
-  defp top_side(_side), do: :gote
-
-  defp bottom_side(:sente), do: :sente
-  defp bottom_side(:gote), do: :gote
-  defp bottom_side(_side), do: :sente
-
-  defp format_clock(seconds) when is_integer(seconds) do
-    minutes = div(seconds, 60)
-    seconds = rem(seconds, 60)
-    "#{minutes}:#{String.pad_leading(Integer.to_string(seconds), 2, "0")}"
-  end
-
-  defp format_clock(_seconds), do: "--:--"
-
-  defp clock_class(game, side) do
-    seconds = get_in(game, [:clocks, side]) || 0
-
-    [
-      "clock",
-      game.turn == side and game.phase == :playing && "active",
-      seconds <= 10 && "low-time"
-    ]
-  end
-
-  defp hand_sections(%{board: board}, :gote) do
-    [
-      %{title: "Sua mao", side: :gote, pieces: board.hands.gote, clickable?: true},
-      %{title: "Mao do adversario", side: :sente, pieces: board.hands.sente, clickable?: false}
-    ]
-  end
-
-  defp hand_sections(%{board: board}, :sente) do
-    [
-      %{title: "Sua mao", side: :sente, pieces: board.hands.sente, clickable?: true},
-      %{title: "Mao do adversario", side: :gote, pieces: board.hands.gote, clickable?: false}
-    ]
-  end
-
-  defp hand_sections(%{board: board}, _side) do
-    [
-      %{title: "Sente", side: :sente, pieces: board.hands.sente, clickable?: false},
-      %{title: "Gote", side: :gote, pieces: board.hands.gote, clickable?: false}
-    ]
-  end
-
-  defp last_move_highlight?({:move, from, to, _promote, _captured}, pos), do: pos in [from, to]
-  defp last_move_highlight?({:drop, _type, to}, pos), do: pos == to
-  defp last_move_highlight?(_, _pos), do: false
-
   defp parse_side("sente"), do: {:ok, :sente}
   defp parse_side("gote"), do: {:ok, :gote}
   defp parse_side(_side), do: :error
@@ -485,22 +410,4 @@ defmodule ShogiWeb.GameLive.Show do
   defp error_text(:must_promote), do: "Essa peca precisa promover."
   defp error_text(:invalid_promotion), do: "Essa peca nao pode promover nessa jogada."
   defp error_text(reason), do: "Jogada invalida: #{inspect(reason)}"
-
-  defp piece_symbol(%{type: :king}), do: "玉"
-  defp piece_symbol(%{type: :rook}), do: "飛"
-  defp piece_symbol(%{type: :bishop}), do: "角"
-  defp piece_symbol(%{type: :gold}), do: "金"
-  defp piece_symbol(%{type: :silver}), do: "銀"
-  defp piece_symbol(%{type: :knight}), do: "桂"
-  defp piece_symbol(%{type: :lance}), do: "香"
-  defp piece_symbol(%{type: :pawn}), do: "歩"
-
-  defp piece_symbol(%{type: :promoted_rook}), do: "龍"
-  defp piece_symbol(%{type: :promoted_bishop}), do: "馬"
-  defp piece_symbol(%{type: :promoted_silver}), do: "全"
-  defp piece_symbol(%{type: :promoted_knight}), do: "圭"
-  defp piece_symbol(%{type: :promoted_lance}), do: "杏"
-  defp piece_symbol(%{type: :promoted_pawn}), do: "と"
-
-  defp piece_symbol(_), do: "?"
 end

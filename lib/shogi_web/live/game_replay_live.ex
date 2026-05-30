@@ -5,6 +5,8 @@ defmodule ShogiWeb.GameReplayLive do
   alias Shogi.Games
   alias Shogi.Repo
 
+  import ShogiWeb.Components.GameBoard
+
   @impl true
   def mount(%{"game_id" => game_id}, _session, socket) do
     game = Games.get_game_record_by_public_id(game_id)
@@ -94,72 +96,36 @@ defmodule ShogiWeb.GameReplayLive do
           </dl>
         </section>
 
-        <section class="card replay-board-card">
-          <div class="replay-toolbar">
-            <div class="replay-counter">Lance <%= @move_index %> / <%= length(@moves) %></div>
+        <div class="replay-main">
+          <section class="card replay-toolbar-card">
+            <div class="replay-toolbar">
+              <div class="replay-counter">Lance <%= @move_index %> / <%= length(@moves) %></div>
 
-            <div class="replay-controls">
-              <button type="button" class="btn secondary" phx-click="go_start" disabled={@move_index == 0}>Início</button>
-              <button type="button" class="btn secondary" phx-click="go_prev" disabled={@move_index == 0}>Anterior</button>
-              <button type="button" class="btn secondary" phx-click="go_next" disabled={@move_index == length(@moves)}>Próximo</button>
-              <button type="button" class="btn secondary" phx-click="go_end" disabled={@move_index == length(@moves)}>Final</button>
-              <button type="button" class="btn sente" phx-click="toggle_perspective">Inverter</button>
+              <div class="replay-controls">
+                <button type="button" class="btn secondary" phx-click="go_start" disabled={@move_index == 0}>Início</button>
+                <button type="button" class="btn secondary" phx-click="go_prev" disabled={@move_index == 0}>Anterior</button>
+                <button type="button" class="btn secondary" phx-click="go_next" disabled={@move_index == length(@moves)}>Próximo</button>
+                <button type="button" class="btn secondary" phx-click="go_end" disabled={@move_index == length(@moves)}>Final</button>
+                <button type="button" class="btn sente" phx-click="toggle_perspective">Inverter</button>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <div class="board-wrapper replay-board-wrapper">
-            <div class="shogi-board" aria-label="Tabuleiro de replay">
-              <%= for row <- board_rows(@perspective) do %>
-                <%= for col <- board_cols(@perspective) do %>
-                  <% pos = {row, col} %>
-                  <% piece = Board.get(@board, pos) %>
+          <section class="card replay-current-move" aria-live="polite">
+            <%= current_move_summary(@current_move) %>
+          </section>
 
-                  <div
-                    class={[
-                      "square",
-                      rem(row + col, 2) == 0 && "light",
-                      rem(row + col, 2) == 1 && "dark"
-                    ]}
-                    data-row={row}
-                    data-col={col}
-                  >
-                    <%= if piece do %>
-                      <span class={[
-                        "piece",
-                        to_string(piece.owner),
-                        piece_orientation_class(piece, @perspective),
-                        promoted_piece?(piece) && "promoted-piece"
-                      ]}>
-                        <%= piece_symbol(piece) %>
-                      </span>
-                    <% end %>
-                  </div>
-                <% end %>
-              <% end %>
-            </div>
-          </div>
-        </section>
-
-        <aside class="card replay-move-card">
-          <p class="eyebrow">Lance atual</p>
-          <%= if @current_move do %>
-            <dl class="replay-move-details">
-              <div><dt>Número</dt><dd><%= @current_move.move_number %></dd></div>
-              <div><dt>Lado</dt><dd><%= side_label(@current_move.side) %></dd></div>
-              <div><dt>Tipo</dt><dd><%= @current_move.kind %></dd></div>
-              <div><dt>Peça</dt><dd><%= empty_dash(@current_move.piece_type) %></dd></div>
-              <div><dt>Origem</dt><dd><%= position_label(@current_move.from_row, @current_move.from_col) %></dd></div>
-              <div><dt>Destino</dt><dd><%= position_label(@current_move.to_row, @current_move.to_col) %></dd></div>
-              <div><dt>Promoveu</dt><dd><%= if @current_move.promoted, do: "sim", else: "não" %></dd></div>
-              <div><dt>Captura</dt><dd><%= empty_dash(@current_move.captured_piece_type) %></dd></div>
-              <div><dt>Relógio Sente</dt><dd><%= format_clock(clock_after(@current_move, "sente")) %></dd></div>
-              <div><dt>Relógio Gote</dt><dd><%= format_clock(clock_after(@current_move, "gote")) %></dd></div>
-              <div><dt>Resultado após</dt><dd><%= result_label(@current_move.result_after) %></dd></div>
-            </dl>
-          <% else %>
-            <p class="muted">Posição inicial.</p>
-          <% end %>
-        </aside>
+          <.game_board
+            board={@board}
+            side={@perspective}
+            last_move={@last_move}
+            clickable?={false}
+            hands_clickable?={false}
+            disabled?={true}
+            replay_mode?={true}
+            clocks={@replay_clocks}
+          />
+        </div>
       <% end %>
     </div>
     """
@@ -169,6 +135,8 @@ defmodule ShogiWeb.GameReplayLive do
     socket
     |> assign(:board, Board.new())
     |> assign(:current_move, nil)
+    |> assign(:last_move, nil)
+    |> assign(:replay_clocks, replay_clocks(nil))
   end
 
   defp assign_replay_position(socket) do
@@ -179,6 +147,8 @@ defmodule ShogiWeb.GameReplayLive do
     socket
     |> assign(:current_move, move)
     |> assign(:board, board)
+    |> assign(:last_move, replay_last_move(move))
+    |> assign(:replay_clocks, replay_clocks(move))
   end
 
   defp board_for_move(nil), do: Board.new()
@@ -202,42 +172,57 @@ defmodule ShogiWeb.GameReplayLive do
     end
   end
 
-  defp board_rows(:gote), do: 8..0//-1
-  defp board_rows(_side), do: 0..8
-
-  defp board_cols(:gote), do: 8..0//-1
-  defp board_cols(_side), do: 0..8
-
-  defp piece_orientation_class(%{owner: owner}, viewer_side) do
-    if owner == viewer_side, do: "own-piece", else: "opponent-piece"
+  defp replay_last_move(
+         %{kind: "move", from_row: from_row, from_col: from_col, to_row: to_row, to_col: to_col} =
+           move
+       )
+       when is_integer(from_row) and is_integer(from_col) and is_integer(to_row) and
+              is_integer(to_col) do
+    {:move, {from_row, from_col}, {to_row, to_col}, move.promoted, move.captured_piece_type}
   end
 
-  defp promoted_piece?(%{type: type}) do
-    type in [
-      :promoted_rook,
-      :promoted_bishop,
-      :promoted_silver,
-      :promoted_knight,
-      :promoted_lance,
-      :promoted_pawn
+  defp replay_last_move(%{kind: "drop", to_row: to_row, to_col: to_col, piece_type: piece_type})
+       when is_integer(to_row) and is_integer(to_col) do
+    {:drop, piece_type, {to_row, to_col}}
+  end
+
+  defp replay_last_move(_move), do: nil
+
+  defp replay_clocks(nil), do: %{sente: nil, gote: nil}
+
+  defp replay_clocks(move) do
+    %{sente: clock_after(move, "sente"), gote: clock_after(move, "gote")}
+  end
+
+  defp current_move_summary(nil), do: "Lance atual: Posição inicial."
+
+  defp current_move_summary(move) do
+    [
+      "Lance atual: #{move.move_number}",
+      side_label(move.side),
+      move.kind,
+      empty_dash(move.piece_type),
+      move_path(move),
+      "captura: #{empty_dash(move.captured_piece_type)}",
+      "promoveu: #{if move.promoted, do: "sim", else: "não"}",
+      "relógio: Sente #{format_clock(clock_after(move, "sente"))} / Gote #{format_clock(clock_after(move, "gote"))}",
+      result_segment(move.result_after)
     ]
+    |> Enum.reject(&(&1 in [nil, "", "-"]))
+    |> Enum.join(" · ")
   end
 
-  defp piece_symbol(%{type: :king}), do: "玉"
-  defp piece_symbol(%{type: :rook}), do: "飛"
-  defp piece_symbol(%{type: :bishop}), do: "角"
-  defp piece_symbol(%{type: :gold}), do: "金"
-  defp piece_symbol(%{type: :silver}), do: "銀"
-  defp piece_symbol(%{type: :knight}), do: "桂"
-  defp piece_symbol(%{type: :lance}), do: "香"
-  defp piece_symbol(%{type: :pawn}), do: "歩"
-  defp piece_symbol(%{type: :promoted_rook}), do: "龍"
-  defp piece_symbol(%{type: :promoted_bishop}), do: "馬"
-  defp piece_symbol(%{type: :promoted_silver}), do: "全"
-  defp piece_symbol(%{type: :promoted_knight}), do: "圭"
-  defp piece_symbol(%{type: :promoted_lance}), do: "杏"
-  defp piece_symbol(%{type: :promoted_pawn}), do: "と"
-  defp piece_symbol(_), do: "?"
+  defp move_path(%{from_row: nil, from_col: nil, to_row: nil, to_col: nil}), do: nil
+
+  defp move_path(%{from_row: nil, from_col: nil, to_row: row, to_col: col}),
+    do: "drop em #{position_label(row, col)}"
+
+  defp move_path(%{from_row: from_row, from_col: from_col, to_row: to_row, to_col: to_col}) do
+    "#{position_label(from_row, from_col)} → #{position_label(to_row, to_col)}"
+  end
+
+  defp result_segment(nil), do: nil
+  defp result_segment(result), do: "resultado após: #{result_label(result)}"
 
   defp side_label(nil), do: "-"
   defp side_label(:sente), do: "Sente"
@@ -268,12 +253,4 @@ defmodule ShogiWeb.GameReplayLive do
       _ -> nil
     end
   end
-
-  defp format_clock(seconds) when is_integer(seconds) do
-    minutes = div(seconds, 60)
-    seconds = rem(seconds, 60)
-    "#{minutes}:#{String.pad_leading(Integer.to_string(seconds), 2, "0")}"
-  end
-
-  defp format_clock(_seconds), do: "-"
 end

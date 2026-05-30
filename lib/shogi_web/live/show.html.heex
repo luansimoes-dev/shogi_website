@@ -100,99 +100,19 @@
     <% end %>
   </section>
 
-  <section class="card board-card">
-    <% top = top_side(@side) %>
-    <% bottom = bottom_side(@side) %>
-
-    <div class="clock-row top-clock">
-      <div class={clock_class(@game, top)}>
-        <span><%= side_label(top) %></span>
-        <strong><%= format_clock(@game.clocks[top]) %></strong>
-      </div>
-    </div>
-
-    <div class="board-wrapper">
-      <div class="shogi-board" aria-label="Tabuleiro de Shogi">
-        <%= for row <- board_rows(@side) do %>
-          <%= for col <- board_cols(@side) do %>
-            <% pos = {row, col} %>
-            <% piece = Shogi.Game.Board.get(@game.board, pos) %>
-
-            <button
-              type="button"
-              class={[
-                "square",
-                rem(row + col, 2) == 0 && "light",
-                rem(row + col, 2) == 1 && "dark",
-                square_status(@selected, @game.last_move, pos)
-              ]}
-              phx-click="square"
-              phx-value-row={row}
-              phx-value-col={col}
-              aria-label={"Casa row #{row}, col #{col}"}
-              disabled={finished?(@game)}
-            >
-              <%= if piece do %>
-                <span class={["piece", to_string(piece.owner), piece_orientation_class(piece, @side)]}>
-                  <%= piece_symbol(piece) %>
-                </span>
-              <% end %>
-            </button>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-
-    <div class="clock-row bottom-clock">
-      <div class={clock_class(@game, bottom)}>
-        <span><%= side_label(bottom) %></span>
-        <strong><%= format_clock(@game.clocks[bottom]) %></strong>
-      </div>
-    </div>
-  </section>
-
-  <%= for hand <- hand_sections(@game, @side) do %>
-    <aside class={["card", "hand", to_string(hand.side)]}>
-      <div>
-        <p class="eyebrow"><%= side_label(hand.side) %></p>
-        <h2><%= hand.title %></h2>
-      </div>
-
-      <div class="hand-list">
-        <%= if hand.pieces == [] do %>
-          <span class="empty-hand">Sem pecas</span>
-        <% else %>
-          <%= for piece <- hand.pieces do %>
-            <%= if hand[:clickable?] and not finished?(@game) do %>
-              <button
-                type="button"
-                class={[
-                  "hand-piece",
-                  to_string(hand.side),
-                  piece_orientation_class(%{owner: hand.side}, @side),
-                  selected_drop_class(assigns, piece, hand.side)
-                ]}
-                phx-click="select_drop"
-                phx-value-type={to_string(piece)}
-                phx-value-side={hand.side}
-              >
-                <%= piece_symbol(%{type: piece, owner: hand.side}) %>
-              </button>
-            <% else %>
-              <span class={[
-                "hand-piece",
-                to_string(hand.side),
-                piece_orientation_class(%{owner: hand.side}, @side),
-                "disabled"
-              ]}>
-                <%= piece_symbol(%{type: piece, owner: hand.side}) %>
-              </span>
-            <% end %>
-          <% end %>
-        <% end %>
-      </div>
-    </aside>
-  <% end %>
+  <.game_board
+    board={@game.board}
+    side={@side}
+    selected={@selected}
+    selected_drop={@selected_drop}
+    last_move={@game.last_move}
+    clickable?={true}
+    hands_clickable?={true}
+    disabled?={finished?(@game)}
+    clocks={@game.clocks}
+    turn={@game.turn}
+    phase={@game.phase}
+  />
 
   <%= if finished?(@game) do %>
     <div class="game-result-overlay" role="dialog" aria-live="polite">
